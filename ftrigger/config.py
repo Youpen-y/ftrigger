@@ -1,0 +1,259 @@
+"""Configuration management module
+
+Loads and validates YAML configuration files with hierarchical support:
+- System level: /etc/ftrigger/config.yaml
+- User level: ~/.config/ftrigger/config.yaml
+- Project level: ./config.yaml or specified via --config
+"""
+
+import os
+import platform
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Optional
+
+import yaml
+from logging import getLogger
+
+logger = getLogger(__name__)
+
+
+@dataclass
+class WatchConfig:
+    """Single watch rule configuration"""
+
+    path: str
+    prompt: str
+    recursive: bool = True
+    extensions: Optional[list[str]] = None
+    # Claude CLI permission configuration
+    permission_mode: str = "default"  # auto, acceptEdits, bypassPermissions, default, dontAsk
+    allowed_tools: Optional[list[str]] = None  # Allowed tools whitelist, e.g. ["Bash(git:*)", "Edit"]
+    exclude_patterns: Optional[list[str]] = None  # Exclude path patterns, e.g. [".git", "node_modules", "*.log"]
+
+    def __post_init__(self):
+        """Configuration validation"""
+        # Validate path existence
+        if not os.path.exists(self.path):
+            raise ValueError(f"Watch path does not exist: {self.path}")
+
+        # Normalize path
+        self.path = os.path.abspath(self.path)
+
+        # Validate if directory
+        if not os.path.isdir(self.path):
+            raise ValueError(f"Watch path must be a directory: {self.path}")
+
+        # Normalize extensions list (ensure starting with .)
+        if self.extensions:
+            self.extensions = [
+                ext if ext.startswith(".") else f".{ext}"
+                for ext in self.extensions
+            ]
+
+        # Validate permission mode
+        valid_modes = ["auto", "acceptEdits", "bypassPermissions", "default", "dontAsk"]
+        if self.permission_mode not in valid_modes:
+            raise ValueError(f"Invalid permission mode: {self.permission_mode}, valid values are: {valid_modes}")
+
+        logger.info(f"Loaded watch config: path={self.path}, prompt='{self.prompt}', "
+                    f"recursive={self.recursive}, extensions={self.extensions}, "
+                    f"permission_mode={self.permission_mode}, allowed_tools={self.allowed_tools}, "
+                    f"exclude_patterns={self.exclude_patterns}")
+
+
+@dataclass
+class Config:
+    """Global configuration"""
+
+    log_level: str = "INFO"
+    watches: list[WatchConfig] = field(default_factory=list)
+
+    def merge(self, other: "Config") -> "Config":
+        """Merge another config into this one.
+
+        Higher priority config (other) overrides lower priority config (self).
+        Watches from both configs are combined.
+
+        Args:
+            other: Higher priority config to merge
+
+        Returns:
+            Merged config
+        """
+        # Override log_level if specified in higher priority config
+        log_level = other.log_level if other.log_level != "INFO" else self.log_level
+
+        # Combine watches from both configs
+        watches = self.watches + other.watches
+
+        return Config(log_level=log_level, watches=watches)
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "Config":
+        """Create configuration object from dictionary"""
+        log_level = data.get("log_level", "INFO")
+        watches_data = data.get("watches", [])
+
+        watches = []
+        for watch_data in watches_data:
+            try:
+                watch = WatchConfig(
+                    path=watch_data["path"],
+                    prompt=watch_data["prompt"],
+                    recursive=watch_data.get("recursive", True),
+                    extensions=watch_data.get("extensions"),
+                    permission_mode=watch_data.get("permission_mode", "default"),
+                    allowed_tools=watch_data.get("allowed_tools"),
+                    exclude_patterns=watch_data.get("exclude_patterns"),
+                )
+                watches.append(watch)
+            except KeyError as e:
+                raise ValueError(f"Watch configuration missing required field: {e}")
+            except ValueError as e:
+                logger.warning(f"Skipping invalid watch configuration: {e}")
+
+        # Allow empty watches for system/user level configs
+        # Only require watches in final merged config
+        return cls(log_level=log_level, watches=watches)
+
+
+def get_config_paths() -> dict[str, Optional[Path]]:
+    """Get configuration file paths for all levels.
+
+    Returns:
+        Dictionary with keys: system, user
+    """
+    paths = {}
+
+    # System level config path
+    if platform.system() == "Windows":
+        system_config_dir = Path(os.environ.get("PROGRAMDATA", "C:\\ProgramData"))
+    else:
+        system_config_dir = Path("/etc")
+
+    system_path = system_config_dir / "ftrigger" / "config.yaml"
+    paths["system"] = system_path if system_path.exists() else None
+
+    # User level config path
+    if platform.system() == "Windows":
+        user_config_dir = Path(os.environ.get("APPDATA", os.path.expanduser("~\\AppData\\Roaming")))
+    else:
+        user_config_dir = Path(os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config")))
+
+    user_path = user_config_dir / "ftrigger" / "config.yaml"
+    paths["user"] = user_path if user_path.exists() else None
+
+    return paths
+
+
+def load_config_file(config_path: Path) -> Optional[dict]:
+    """Load a single YAML configuration file.
+
+    Args:
+        config_path: Path to configuration file
+
+    Returns:
+        Parsed configuration data, or None if file doesn't exist or fails to load
+    """
+    if not config_path.exists():
+        return None
+
+    try:
+        with open(config_path, "r", encoding="utf-8") as f:
+            return yaml.safe_load(f)
+    except Exception as e:
+        logger.warning(f"Failed to load config file {config_path}: {e}")
+        return None
+
+
+def load_config(config_path: Optional[str] = None) -> Config:
+    """Load configuration with hierarchical fallback.
+
+    Loading priority (higher overrides lower):
+    1. Explicit path via --config argument
+    2. ./config.yaml (current directory)
+    3. ~/.config/ftrigger/config.yaml (user level)
+    4. /etc/ftrigger/config.yaml (system level)
+
+    Args:
+        config_path: Optional explicit configuration file path
+
+    Returns:
+        Merged Config object
+
+    Raises:
+        FileNotFoundError: No configuration file found
+        ValueError: Configuration file format error or invalid content
+    """
+    # If explicit path provided, only load that file (backward compatible)
+    if config_path:
+        path = Path(config_path)
+        if not path.exists():
+            raise FileNotFoundError(f"Configuration file not found: {config_path}")
+        if not path.is_file():
+            raise ValueError(f"Configuration path must be a file: {config_path}")
+
+        data = load_config_file(path)
+        if data is None:
+            raise ValueError(f"Configuration file YAML parsing failed: {config_path}")
+
+        if not data:
+            raise ValueError("Configuration file is empty")
+
+        try:
+            return Config.from_dict(data)
+        except ValueError as e:
+            raise ValueError(f"Configuration validation failed: {e}")
+
+    # Otherwise, load and merge configs from all levels
+    configs_to_load = []
+    all_paths = get_config_paths()
+
+    # System level
+    if all_paths["system"]:
+        logger.debug(f"Loading system config: {all_paths['system']}")
+        data = load_config_file(all_paths["system"])
+        if data:
+            configs_to_load.append(("system", Config.from_dict(data)))
+
+    # User level
+    if all_paths["user"]:
+        logger.debug(f"Loading user config: {all_paths['user']}")
+        data = load_config_file(all_paths["user"])
+        if data:
+            configs_to_load.append(("user", Config.from_dict(data)))
+
+    # Project level (current directory)
+    project_yaml = Path("config.yaml")
+    if project_yaml.exists():
+        logger.debug(f"Loading project config: {project_yaml}")
+        data = load_config_file(project_yaml)
+        if data:
+            configs_to_load.append(("project", Config.from_dict(data)))
+
+    # No config found
+    if not configs_to_load:
+        raise FileNotFoundError(
+            "No configuration file found. Searched in:\n"
+            "  - ./config.yaml (current directory)\n"
+            "  - ~/.config/ftrigger/config.yaml (user level)\n"
+            "  - /etc/ftrigger/config.yaml (system level)\n"
+            "Use --config to specify a configuration file."
+        )
+
+    # Merge configs (system -> user -> project)
+    merged = configs_to_load[0][1]
+    for level, config in configs_to_load[1:]:
+        merged = merged.merge(config)
+        logger.info(f"Merged {level} config into configuration")
+
+    # Validate final config has at least one watch
+    if not merged.watches:
+        raise ValueError(
+            "No valid watch rules in merged configuration. "
+            "Ensure at least one watch is configured."
+        )
+
+    logger.info(f"Final configuration: log_level={merged.log_level}, watches={len(merged.watches)}")
+    return merged

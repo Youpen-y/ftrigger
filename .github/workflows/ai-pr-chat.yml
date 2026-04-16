@@ -1,0 +1,152 @@
+name: AI PR Chat Bot (Copilot Chat Style)
+
+on:
+  issue_comment:
+    types: [created]
+
+jobs:
+  chat:
+    if: github.event.issue.pull_request != null
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # --------------------------------------------------
+      # 1. Check trigger
+      # --------------------------------------------------
+      - name: Check trigger
+        id: trigger
+        run: |
+          BODY="${{ github.event.comment.body }}"
+          AUTHOR="${{ github.event.comment.user.login }}"
+
+          # Ignore bot itself
+          if [ "$AUTHOR" = "github-actions[bot]" ]; then
+            echo "go=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          # Only respond to /ai or @ai
+          if echo "$BODY" | grep -qiE '^/ai\b|@ai\b'; then
+            echo "go=true" >> $GITHUB_OUTPUT
+          else
+            echo "go=false" >> $GITHUB_OUTPUT
+          fi
+
+      - if: steps.trigger.outputs.go != 'true'
+        run: exit 0
+
+      # --------------------------------------------------
+      # 2. Fetch PR diff (only once)
+      # --------------------------------------------------
+      - name: Fetch PR diff
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          curl -s \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github.v3.diff" \
+            "${{ github.event.issue.pull_request.url }}" > pr.diff
+
+      # --------------------------------------------------
+      # 3. Generate Copilot-style chat response
+      # --------------------------------------------------
+      - name: Install anthropic
+        run: pip3 install anthropic
+
+      - name: Generate AI response
+        env:
+          ANTHROPIC_AUTH_TOKEN: ${{ secrets.ANTHROPIC_AUTH_TOKEN }}
+          ANTHROPIC_BASE_URL: https://open.bigmodel.cn/api/anthropic
+          ANTHROPIC_DEFAULT_MODEL: glm-4.7
+        run: |
+          python3 << 'EOF'
+          import os
+          import anthropic
+
+          diff = open("pr.diff", encoding="utf-8", errors="ignore").read()
+          question = """${{ github.event.comment.body }}"""
+
+          q = question.lower()
+          review_mode = any(
+              k in q for k in [
+                  "review",
+                  "issue",
+                  "problem",
+                  "bug",
+                  "concern",
+                  "lgtm"
+              ]
+          )
+
+          if review_mode:
+              instruction = (
+                  "Do a LIGHT review focused ONLY on what the user asked.\n"
+                  "- List at most 3 points.\n"
+                  "- No full PR summary.\n"
+              )
+          else:
+              instruction = (
+                  "Answer ONLY the user's question.\n"
+                  "- Do NOT do a code review.\n"
+                  "- Do NOT summarize the PR.\n"
+              )
+
+          prompt = (
+              "You are GitHub Copilot Chat for a pull request.\n\n"
+              + instruction +
+              "\n"
+              "Rules:\n"
+              "- Be concise and direct.\n"
+              "- Max ~10 lines.\n"
+              "- Do NOT repeat the diff.\n"
+              "- Use bullet points only if helpful.\n"
+              "- Do NOT use Markdown headings (# or ##).\n\n"
+              "PR diff (use only if necessary):\n" + diff + "\n\n"
+              "User question:\n" + question
+          )
+
+          client = anthropic.Anthropic(
+              api_key=os.environ["ANTHROPIC_AUTH_TOKEN"],
+              base_url=os.environ["ANTHROPIC_BASE_URL"],
+          )
+
+          message = client.messages.create(
+              model=os.environ.get("ANTHROPIC_DEFAULT_MODEL", "glm-4.7"),
+              max_tokens=2048,
+              temperature=0.3,
+              messages=[
+                  {"role": "user", "content": prompt}
+              ],
+          )
+
+          content = message.content[0].text
+
+          with open("reply.md", "w", encoding="utf-8") as f:
+              f.write(content.strip())
+          EOF
+
+      # --------------------------------------------------
+      # 4. Post reply
+      # --------------------------------------------------
+      - name: Post reply
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const fs = require('fs');
+            const reply = fs.readFileSync('reply.md', 'utf8');
+            const commentBody = '🤖 **AI**\n\n' + reply;
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: commentBody
+            });
