@@ -1,0 +1,117 @@
+name: AI PR Review (Copilot Style)
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize]
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fetch PR diff
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          curl -s \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github.v3.diff" \
+            "${{ github.event.pull_request.url }}" > pr.diff
+
+      - name: Install anthropic
+        run: pip3 install anthropic
+
+      - name: Run AI Review
+        env:
+          ANTHROPIC_AUTH_TOKEN: ${{ secrets.ANTHROPIC_AUTH_TOKEN }}
+          ANTHROPIC_BASE_URL: https://open.bigmodel.cn/api/anthropic
+          ANTHROPIC_DEFAULT_MODEL: glm-4.7
+        run: |
+          python3 << 'EOF'
+          import os
+          import anthropic
+
+          diff = open("pr.diff", encoding="utf-8", errors="ignore").read()
+
+          if not diff.strip():
+              print("No diff found, skipping review")
+              exit(0)
+
+          client = anthropic.Anthropic(
+              api_key=os.environ["ANTHROPIC_AUTH_TOKEN"],
+              base_url=os.environ["ANTHROPIC_BASE_URL"],
+          )
+
+          prompt = f"""You are an AI code reviewer like GitHub Copilot Review.
+
+          Review the following PR diff and provide feedback with these sections:
+          - **Summary**: Brief overview of changes
+          - **Potential Issues**: Any bugs, security issues, or concerns
+          - **Suggestions**: Improvements or best practices
+          - **LGTM**: Overall assessment (LGTM / Needs Changes)
+
+          PR diff:
+          {diff}
+          """
+
+          message = client.messages.create(
+              model=os.environ.get("ANTHROPIC_DEFAULT_MODEL", "glm-4.7"),
+              max_tokens=4096,
+              temperature=0.2,
+              messages=[
+                  {"role": "user", "content": prompt}
+              ],
+          )
+
+          review = message.content[0].text
+          open("review.md", "w", encoding="utf-8").write(review)
+          EOF
+
+      - name: Create or update bot comment
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const fs = require('fs');
+            let body = '';
+            try {
+              body = fs.readFileSync('review.md', 'utf8');
+            } catch (e) {
+              console.log('No review generated');
+              return;
+            }
+            const commentBody = '### 🤖 AI PR Review\n\n' + body;
+
+            const comments = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+
+            const botComment = comments.data.find(c =>
+              c.user.login === 'github-actions[bot]' &&
+              c.body.startsWith('### 🤖 AI PR Review')
+            );
+
+            if (botComment) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id,
+                body: commentBody
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: commentBody
+              });
+            }

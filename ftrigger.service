@@ -1,0 +1,22 @@
+[Unit]
+Description=File Trigger - Monitor file changes and trigger Claude CLI
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/home/your_user/.local/bin/ftrigger --config /home/your_user/.config/ftrigger/config.yaml
+ExecReload=/bin/kill -HUP $MAINPID
+KillMode=process
+KillSignal=SIGTERM
+TimeoutStopSec=30
+Restart=always
+RestartSec=10
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ftrigger
+
+[Install]
+WantedBy=default.target
