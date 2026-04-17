@@ -91,35 +91,6 @@ class WatchHandler(FileSystemEventHandler):
 
         return True
 
-    def _should_handle_event(self, event_type: str) -> bool:
-        """Check if the event type should be handled
-
-        Args:
-            event_type: Event type (created, modified, deleted, moved)
-
-        Returns:
-            True if the event should be handled, False otherwise
-        """
-        # If no events specified, handle all events (default behavior)
-        if not self.config.events:
-            return True
-
-        # Check if event type is in the configured list
-        return event_type in self.config.events
-
-    def _get_path(self, path) -> str:
-        """Get normalized path string
-
-        Args:
-            path: Path object or string or bytes
-
-        Returns:
-            Normalized path string
-        """
-        if isinstance(path, bytes):
-            return path.decode('utf-8')
-        return path
-
     def _trigger_claude(self, file_path: str, event_type: str, **kwargs):
         """Trigger Claude CLI
 
@@ -248,10 +219,34 @@ class WatchHandler(FileSystemEventHandler):
         src_path = self._get_path(event.src_path)
         dest_path = self._get_path(event.dest_path)
 
-        # Check if either source or destination should be processed
-        if self._should_process(src_path) or self._should_process(dest_path):
-            logger.info(f"File moved: {src_path} -> {dest_path}")
-            self._trigger_claude(dest_path, "moved", src_path=src_path, dest_path=dest_path)
+        # Check if paths are within the watched directory
+        src_in_watch = src_path.startswith(self.config.path)
+        dest_in_watch = dest_path.startswith(self.config.path)
+
+        # Apply file-level filtering (extensions, exclude patterns)
+        # Only check filtering for paths that are within the watched directory
+        process_src = src_in_watch and self._should_process(src_path)
+        process_dest = dest_in_watch and self._should_process(dest_path)
+
+        if not (process_src or process_dest):
+            return
+
+        # Determine which path to use for triggering based on the move scenario
+        # - Move within watched dir: use dest_path (new location)
+        # - Move out of watched dir: use src_path (old location, still relevant)
+        # - Move into watched dir: use dest_path (new location in watched dir)
+        if process_src and not process_dest:
+            # File moved out of watched directory - use source path
+            trigger_path = src_path
+        elif process_dest and not process_src:
+            # File moved into watched directory - use destination path
+            trigger_path = dest_path
+        else:
+            # File moved within watched directory (renamed) - use destination path
+            trigger_path = dest_path
+
+        logger.info(f"File moved: {src_path} -> {dest_path}")
+        self._trigger_claude(trigger_path, "moved", src_path=src_path, dest_path=dest_path)
 
 
 def create_observer(config: WatchConfig) -> Observer:
