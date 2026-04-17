@@ -66,19 +66,21 @@ class WatchConfig:
 
         # Validate event types if provided
         if self.events is not None:
+            # Reject empty list as configuration error
+            if len(self.events) == 0:
+                raise ValueError(
+                    f"Empty 'events' list specified for watch at {self.path}. "
+                    f"An empty events list will disable all file system monitoring. "
+                    f"Either specify events to monitor or omit the field to use defaults. "
+                    f"Supported events: {self.SUPPORTED_EVENTS}"
+                )
+
             # Validate event type values
             invalid_events = set(self.events) - self.SUPPORTED_EVENTS
             if invalid_events:
                 raise ValueError(
                     f"Invalid event types: {invalid_events}. "
                     f"Supported events: {self.SUPPORTED_EVENTS}"
-                )
-
-            # Warn if events list is empty (user explicitly specified no events)
-            if len(self.events) == 0:
-                logger.warning(
-                    f"Empty 'events' list specified for watch at {self.path}. "
-                    f"No file system events will be monitored."
                 )
         else:
             # No events specified - use default behavior
