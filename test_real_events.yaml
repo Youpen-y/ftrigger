@@ -1,0 +1,39 @@
+# Real event filter test configuration
+log_level: DEBUG
+
+watches:
+  # Test 1: Only monitor file creation
+  - path: /tmp/real_event_test
+    prompt: "✅ Created: File {file} has been created"
+    recursive: false
+    events: ["created"]
+    extensions: [".test"]
+    permission_mode: auto
+    allowed_tools: ["Read"]
+
+  # Test 2: Only monitor file modification
+  - path: /tmp/real_event_test
+    prompt: "🔄 Modified: File {file} has been modified"
+    recursive: false
+    events: ["modified"]
+    extensions: [".test"]
+    permission_mode: auto
+    allowed_tools: ["Read"]
+
+  # Test 3: Only monitor file deletion
+  - path: /tmp/real_event_test
+    prompt: "🗑️  Deleted: File {file} has been deleted"
+    recursive: false
+    events: ["deleted"]
+    extensions: [".test"]
+    permission_mode: auto
+    allowed_tools: ["Read"]
+
+  # Test 4: Monitor all events
+  - path: /tmp/real_event_test_all
+    prompt: "📋 Event: {events}, File: {file}"
+    recursive: false
+    events: ["created", "modified", "deleted", "moved"]
+    extensions: [".test"]
+    permission_mode: auto
+    allowed_tools: ["Read"]

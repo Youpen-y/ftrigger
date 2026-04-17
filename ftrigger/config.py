@@ -62,10 +62,11 @@ class WatchConfig:
             raise ValueError(f"Invalid permission mode: {self.permission_mode}, valid values are: {valid_modes}")
 
         # Check if prompt uses event type variables
-        uses_event_type = "{event_type}" in self.prompt or "{event}" in self.prompt
+        uses_event_type = "{events}" in self.prompt
 
-        # Validate event types
-        if self.events:
+        # Validate event types if provided
+        if self.events is not None:
+            # Validate event type values
             invalid_events = set(self.events) - self.SUPPORTED_EVENTS
             if invalid_events:
                 raise ValueError(
@@ -73,8 +74,14 @@ class WatchConfig:
                     f"Supported events: {self.SUPPORTED_EVENTS}"
                 )
 
-        # Remind user to specify events field
-        if not self.events or len(self.events) == 0:
+            # Warn if events list is empty (user explicitly specified no events)
+            if len(self.events) == 0:
+                logger.warning(
+                    f"Empty 'events' list specified for watch at {self.path}. "
+                    f"No file system events will be monitored."
+                )
+        else:
+            # No events specified - use default behavior
             if uses_event_type:
                 logger.warning(
                     f"Prompt uses '{{event_type}}' or '{{event}}' variable, "
@@ -83,10 +90,9 @@ class WatchConfig:
                     f"Supported events: {self.SUPPORTED_EVENTS}"
                 )
             else:
-                logger.warning(
+                logger.debug(
                     f"No 'events' field specified for watch at {self.path}. "
-                    f"This will monitor all supported events: {self.SUPPORTED_EVENTS}. "
-                    f"Consider specifying 'events' explicitly to avoid unexpected behavior."
+                    f"Monitoring all supported events: {self.SUPPORTED_EVENTS}"
                 )
             # Set default to all supported events if not specified
             self.events = list(self.SUPPORTED_EVENTS)

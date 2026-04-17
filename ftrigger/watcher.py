@@ -33,9 +33,9 @@ class WatchHandler(FileSystemEventHandler):
         Returns:
             True if the event should be handled, False otherwise
         """
-        # If no events specified, handle all events (default behavior)
+        # If events list is empty, no events should be handled
         if not self.config.events:
-            return True
+            return False
 
         # Check if event type is in the configured list
         return event_type in self.config.events
@@ -145,9 +145,8 @@ class WatchHandler(FileSystemEventHandler):
         """
         result = prompt
 
-        # Replace event type variables
-        result = result.replace("{event_type}", event_type)
-        result = result.replace("{event}", event_type)
+        # Replace event type variable
+        result = result.replace("{events}", event_type)
 
         # Replace file path variables
         result = result.replace("{file}", file_path)
