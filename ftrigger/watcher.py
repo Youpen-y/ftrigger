@@ -139,30 +139,35 @@ class WatchHandler(FileSystemEventHandler):
         """
         debounce_key = f"{file_path}:{event_type}"
 
-        # Clean up pending timer (thread-safe)
-        with self._lock:
-            if debounce_key in self._pending_timers:
-                del self._pending_timers[debounce_key]
+        try:
+            # Clean up pending timer (thread-safe)
+            with self._lock:
+                if debounce_key in self._pending_timers:
+                    del self._pending_timers[debounce_key]
 
-        # Format prompt with event type variables
-        prompt = self._format_prompt_with_event(
-            self.config.prompt,
-            event_type,
-            file_path,
-            **kwargs
-        )
+            # Format prompt with event type variables
+            prompt = self._format_prompt_with_event(
+                self.config.prompt,
+                event_type,
+                file_path,
+                **kwargs
+            )
 
-        # Create permission parameters based on configuration
-        perm_mode = self.config.permission_mode
-        permissions = Permissions(
-            auto=(perm_mode == "auto"),
-            accept_edits=(perm_mode == "acceptEdits"),
-            bypass_permissions=(perm_mode == "bypassPermissions"),
-            dont_ask=(perm_mode == "dontAsk"),
-        )
+            # Create permission parameters based on configuration
+            perm_mode = self.config.permission_mode
+            permissions = Permissions(
+                auto=(perm_mode == "auto"),
+                accept_edits=(perm_mode == "acceptEdits"),
+                bypass_permissions=(perm_mode == "bypassPermissions"),
+                dont_ask=(perm_mode == "dontAsk"),
+            )
 
-        logger.info(f"Triggering Claude CLI: {prompt[:50]}...")
-        execute_claude(prompt, file_path, permissions, self.config.allowed_tools)
+            logger.info(f"Triggering Claude CLI: {prompt[:50]}...")
+            execute_claude(prompt, file_path, permissions, self.config.allowed_tools)
+
+        except Exception as e:
+            # Log exception but don't crash the timer thread
+            logger.exception(f"Failed to execute Claude CLI for {file_path} ({event_type}): {e}")
 
     def _format_prompt_with_event(self, prompt: str, event_type: str, file_path: str, **kwargs) -> str:
         """Format prompt with event type and file path variables
