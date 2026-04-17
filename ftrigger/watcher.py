@@ -24,6 +24,35 @@ class WatchHandler(FileSystemEventHandler):
         self.config = config
         self._last_triggered = {}  # For simple debouncing
 
+    def _should_handle_event(self, event_type: str) -> bool:
+        """Check if the event type should be handled
+
+        Args:
+            event_type: Event type (created, modified, deleted, moved)
+
+        Returns:
+            True if the event should be handled, False otherwise
+        """
+        # If no events specified, handle all events (default behavior)
+        if not self.config.events:
+            return True
+
+        # Check if event type is in the configured list
+        return event_type in self.config.events
+
+    def _get_path(self, path) -> str:
+        """Get normalized path string
+
+        Args:
+            path: Path object or string
+
+        Returns:
+            Normalized path string
+        """
+        if isinstance(path, bytes):
+            return path.decode('utf-8')
+        return path
+
     def _should_process(self, event_path: str) -> bool:
         """Determine if the event should be processed
 
@@ -62,25 +91,63 @@ class WatchHandler(FileSystemEventHandler):
 
         return True
 
-    def _trigger_claude(self, file_path: str):
+    def _should_handle_event(self, event_type: str) -> bool:
+        """Check if the event type should be handled
+
+        Args:
+            event_type: Event type (created, modified, deleted, moved)
+
+        Returns:
+            True if the event should be handled, False otherwise
+        """
+        # If no events specified, handle all events (default behavior)
+        if not self.config.events:
+            return True
+
+        # Check if event type is in the configured list
+        return event_type in self.config.events
+
+    def _get_path(self, path) -> str:
+        """Get normalized path string
+
+        Args:
+            path: Path object or string or bytes
+
+        Returns:
+            Normalized path string
+        """
+        if isinstance(path, bytes):
+            return path.decode('utf-8')
+        return path
+
+    def _trigger_claude(self, file_path: str, event_type: str, **kwargs):
         """Trigger Claude CLI
 
         Args:
             file_path: Changed file path
+            event_type: Type of event (created, modified, deleted, moved)
+            **kwargs: Additional event data (e.g., dest_path for moved events)
         """
-        # Format prompt (if {file} variable is used in configuration)
-        prompt = self.config.prompt
+        # Format prompt with event type variables
+        prompt = self._format_prompt_with_event(
+            self.config.prompt,
+            event_type,
+            file_path,
+            **kwargs
+        )
 
-        # Simple debouncing: only trigger once per file within 5 seconds
+        # Debouncing: only trigger once per file per event type within 5 seconds
         import time
 
+        debounce_key = f"{file_path}:{event_type}"
         now = time.time()
-        last_time = self._last_triggered.get(file_path, 0)
+        last_time = self._last_triggered.get(debounce_key, 0)
+
         if now - last_time < 5:
-            logger.debug(f"Debounce skip: {file_path}")
+            logger.debug(f"Debounce skip: {file_path} ({event_type})")
             return
 
-        self._last_triggered[file_path] = now
+        self._last_triggered[debounce_key] = now
 
         # Create permission parameters based on configuration
         perm_mode = self.config.permission_mode
@@ -93,29 +160,98 @@ class WatchHandler(FileSystemEventHandler):
 
         execute_claude(prompt, file_path, permissions, self.config.allowed_tools)
 
+    def _format_prompt_with_event(self, prompt: str, event_type: str, file_path: str, **kwargs) -> str:
+        """Format prompt with event type and file path variables
+
+        Args:
+            prompt: Original prompt template
+            event_type: Type of event (created, modified, deleted, moved)
+            file_path: Path to the file
+            **kwargs: Additional event data (e.g., dest_path for moved events)
+
+        Returns:
+            Formatted prompt
+        """
+        result = prompt
+
+        # Replace event type variables
+        result = result.replace("{event_type}", event_type)
+        result = result.replace("{event}", event_type)
+
+        # Replace file path variables
+        result = result.replace("{file}", file_path)
+        result = result.replace("{path}", file_path)
+
+        # Replace moved event specific variables
+        if event_type == "moved" and "dest_path" in kwargs:
+            dest_path = self._get_path(kwargs["dest_path"])
+            result = result.replace("{dest_path}", dest_path)
+            result = result.replace("{dest}", dest_path)
+            # Also support src_path for moved events
+            if "src_path" in kwargs:
+                src_path = self._get_path(kwargs["src_path"])
+                result = result.replace("{src_path}", src_path)
+                result = result.replace("{src}", src_path)
+
+        return result
+
     def on_created(self, event):
         """File creation event"""
+        if not self._should_handle_event("created"):
+            return
+
         if event.is_directory:
             return
 
-        # Ensure src_path is a string
-        src_path = event.src_path if isinstance(event.src_path, str) else event.src_path.decode('utf-8')
+        src_path = self._get_path(event.src_path)
 
         if self._should_process(src_path):
             logger.info(f"File created: {src_path}")
-            self._trigger_claude(src_path)
+            self._trigger_claude(src_path, "created")
 
     def on_modified(self, event):
         """File modification event"""
+        if not self._should_handle_event("modified"):
+            return
+
         if event.is_directory:
             return
 
-        # Ensure src_path is a string
-        src_path = event.src_path if isinstance(event.src_path, str) else event.src_path.decode('utf-8')
+        src_path = self._get_path(event.src_path)
 
         if self._should_process(src_path):
             logger.info(f"File modified: {src_path}")
-            self._trigger_claude(src_path)
+            self._trigger_claude(src_path, "modified")
+
+    def on_deleted(self, event):
+        """File deletion event"""
+        if not self._should_handle_event("deleted"):
+            return
+
+        if event.is_directory:
+            return
+
+        src_path = self._get_path(event.src_path)
+
+        if self._should_process(src_path):
+            logger.info(f"File deleted: {src_path}")
+            self._trigger_claude(src_path, "deleted")
+
+    def on_moved(self, event):
+        """File move/rename event"""
+        if not self._should_handle_event("moved"):
+            return
+
+        if event.is_directory:
+            return
+
+        src_path = self._get_path(event.src_path)
+        dest_path = self._get_path(event.dest_path)
+
+        # Check if either source or destination should be processed
+        if self._should_process(src_path) or self._should_process(dest_path):
+            logger.info(f"File moved: {src_path} -> {dest_path}")
+            self._trigger_claude(dest_path, "moved", src_path=src_path, dest_path=dest_path)
 
 
 def create_observer(config: WatchConfig) -> Observer:
