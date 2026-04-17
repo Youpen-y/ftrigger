@@ -9,7 +9,7 @@
 ![Python](https://img.shields.io/badge/python-3.9+-blue)
 ![状态](https://img.shields.io/badge/状态-开发中-orange)
 
-文件监控触发 Claude CLI 工具 - 当指定目录下的文件发生变化时，自动执行 Claude CLI 命令。
+文件监控触发 Claude CLI 工具 - 当指定目录下的文件发生变化时，使用自定义提示词模板自动执行 Claude CLI 命令。
 
 </div>
 
@@ -24,6 +24,43 @@
 - 🔄 跨平台支持（Linux、macOS、Windows）
 - 🛡️ 权限控制和工具白名单，增强安全性
 - 📚 **分层配置** - 系统级、用户级、项目级配置
+
+## 应用场景
+
+### 📖 实时构建 LLM Wiki
+
+与传统的定时任务（cron）不同，**ftrigger 提供实时的、事件驱动的自动化**。当新的源文件添加到您的 wiki 时：
+
+- **即时处理**：文件创建后立即处理，无需等待下一个预定的间隔
+- **动态内容**：您的 LLM Wiki 随着新内容的添加而自动更新
+- **资源高效**：仅在发生实际更改时运行，节省计算资源
+
+**LLM Wiki 配置示例：**
+
+```yaml
+watches:
+  - path: /path/to/llm-wiki/raw/sources
+    prompt: "LLM Wiki 源目录有新文件 {file}。基于新内容和 CLAUDE.md，请处理并相应更新 wiki。"
+    recursive: true
+    permission_mode: bypassPermissions
+    exclude_patterns:
+      - ".git"
+      - "__pycache__"
+      - "*.tmp"
+    allowed_tools:
+      - "Read"
+      - "Write"
+      - "Edit"
+      - "LSP"
+```
+
+**相比定时任务的优势：**
+| 方面 | 定时任务（Cron） | 事件驱动（ftrigger） |
+|------|------------------|---------------------|
+| 响应时间 | 固定间隔（如每小时） | 即时（秒级） |
+| 资源使用 | 无论是否有变化都运行 | 仅在需要时运行 |
+| 可扩展性 | 空闲时浪费资源 | 随活动量扩展 |
+| 用户体验 | 延迟更新 | 实时反馈 |
 
 ## 安装
 

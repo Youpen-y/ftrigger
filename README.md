@@ -9,7 +9,7 @@ English | [**中文**](README.zh-CN.md)
 ![Python](https://img.shields.io/badge/python-3.9+-blue)
 ![Status](https://img.shields.io/badge/status-alpha-orange)
 
-File monitoring tool for Claude CLI - Automatically executes Claude CLI commands when files in specified directories change.
+File monitoring tool for Claude CLI - Automatically executes Claude CLI commands with **Customized Prompt Template** when files in specified directories change.
 
 </div>
 
@@ -24,6 +24,43 @@ File monitoring tool for Claude CLI - Automatically executes Claude CLI commands
 - 🔄 Cross-platform support (Linux, macOS, Windows)
 - 🛡️ Permission control and tool whitelisting for security
 - 📚 **Hierarchical configuration** - System, user, and project level configs
+
+## Use Cases
+
+### 📖 Real-time LLM Wiki Building
+
+Unlike traditional scheduled cron jobs, **ftrigger provides real-time, event-driven automation**. When new source files are added to your wiki:
+
+- **Instant Processing**: Files are processed immediately upon creation, not waiting for the next scheduled interval
+- **Dynamic Content**: Your LLM Wiki updates automatically as you add new content
+- **Resource Efficient**: Only runs when actual changes occur, saving computational resources
+
+**Example configuration for LLM Wiki:**
+
+```yaml
+watches:
+  - path: /path/to/llm-wiki/raw/sources
+    prompt: "LLM Wiki sources directory has a new file {file}. Based on the new content and CLAUDE.md, please process and update the wiki accordingly."
+    recursive: true
+    permission_mode: bypassPermissions
+    exclude_patterns:
+      - ".git"
+      - "__pycache__"
+      - "*.tmp"
+    allowed_tools:
+      - "Read"
+      - "Write"
+      - "Edit"
+      - "LSP"
+```
+
+**Benefits over scheduled tasks:**
+| Aspect | Scheduled (Cron) | Event-Driven (ftrigger) |
+|--------|------------------|-------------------------|
+| Response Time | Fixed intervals (e.g., every hour) | Immediate (seconds) |
+| Resource Usage | Runs regardless of changes | Only runs when needed |
+| Scalability | Wastes resources on idle times | Scales with activity |
+| User Experience | Delayed updates | Real-time feedback |
 
 ## Installation
 
