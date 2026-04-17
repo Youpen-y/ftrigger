@@ -83,7 +83,7 @@ def main():
 
     # Start watchers
     try:
-        observers = start_watchers(config.watches)
+        observers, handlers = start_watchers(config.watches)
         logger.info(f"Started {len(observers)} watcher(s)")
 
         # Setup signal handling for graceful shutdown
@@ -107,8 +107,11 @@ def main():
             except KeyboardInterrupt:
                 break
 
-        # Stop all watchers
+        # Stop all watchers and clean up resources
         logger.info("Stopping watchers...")
+        for handler in handlers:
+            handler.cleanup()
+
         for observer in observers:
             observer.stop()
             observer.join()

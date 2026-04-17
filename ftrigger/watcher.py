@@ -25,6 +25,7 @@ class WatchHandler(FileSystemEventHandler):
         self.config = config
         self._pending_timers = {}  # For delayed trigger strategy
         self._delay_seconds = 1  # Delay in seconds before triggering
+        self._lock = threading.Lock()  # For thread-safe timer management
 
     def _should_handle_event(self, event_type: str) -> bool:
         """Check if the event type should be handled
@@ -109,24 +110,24 @@ class WatchHandler(FileSystemEventHandler):
         """
         debounce_key = f"{file_path}:{event_type}"
 
-        # Cancel existing timer if any
-        if debounce_key in self._pending_timers:
-            existing_timer = self._pending_timers[debounce_key]
-            if existing_timer.is_alive():
-                existing_timer.cancel()
-                logger.debug(f"Cancelled pending trigger for: {file_path} ({event_type})")
-            del self._pending_timers[debounce_key]
+        with self._lock:
+            # Cancel existing timer if any
+            if debounce_key in self._pending_timers:
+                existing_timer = self._pending_timers[debounce_key]
+                if existing_timer.is_alive():
+                    existing_timer.cancel()
+                    logger.debug(f"Cancelled pending trigger for: {file_path} ({event_type})")
 
-        # Create a new delayed trigger
-        timer = threading.Timer(
-            self._delay_seconds,
-            self._execute_trigger,
-            args=(file_path, event_type, kwargs)
-        )
-        self._pending_timers[debounce_key] = timer
-        timer.start()
+            # Create a new delayed trigger
+            timer = threading.Timer(
+                self._delay_seconds,
+                self._execute_trigger,
+                args=(file_path, event_type, kwargs)
+            )
+            self._pending_timers[debounce_key] = timer
+            timer.start()
 
-        logger.debug(f"Scheduled delayed trigger for: {file_path} ({event_type}) in {self._delay_seconds}s")
+            logger.debug(f"Scheduled delayed trigger for: {file_path} ({event_type}) in {self._delay_seconds}s")
 
     def _execute_trigger(self, file_path: str, event_type: str, kwargs: dict):
         """Actually execute Claude CLI trigger
@@ -138,9 +139,10 @@ class WatchHandler(FileSystemEventHandler):
         """
         debounce_key = f"{file_path}:{event_type}"
 
-        # Clean up pending timer
-        if debounce_key in self._pending_timers:
-            del self._pending_timers[debounce_key]
+        # Clean up pending timer (thread-safe)
+        with self._lock:
+            if debounce_key in self._pending_timers:
+                del self._pending_timers[debounce_key]
 
         # Format prompt with event type variables
         prompt = self._format_prompt_with_event(
@@ -267,37 +269,52 @@ class WatchHandler(FileSystemEventHandler):
         logger.info(f"File moved: {src_path} -> {dest_path}")
         self._trigger_claude(trigger_path, "moved", src_path=src_path, dest_path=dest_path)
 
+    def cleanup(self):
+        """Clean up pending timers and release resources
 
-def create_observer(config: WatchConfig) -> Observer:
+        This method should be called when stopping the watcher to ensure
+        all pending timers are cancelled and resources are released properly.
+        """
+        with self._lock:
+            for key, timer in list(self._pending_timers.items()):
+                if timer.is_alive():
+                    timer.cancel()
+                    logger.debug(f"Cancelled pending timer during cleanup: {key}")
+            self._pending_timers.clear()
+
+
+def create_observer(config: WatchConfig) -> tuple[Observer, WatchHandler]:
     """Create observer for watch configuration
 
     Args:
         config: Watch configuration
 
     Returns:
-        Configured Observer object
+        Tuple of (observer, handler) for the watch configuration
     """
     observer = Observer()
     handler = WatchHandler(config)
     observer.schedule(handler, config.path, recursive=config.recursive)
-    return observer
+    return observer, handler
 
 
-def start_watchers(configs: list[WatchConfig]) -> list[Observer]:
+def start_watchers(configs: list[WatchConfig]) -> tuple[list[Observer], list[WatchHandler]]:
     """Start all watchers
 
     Args:
         configs: List of watch configurations
 
     Returns:
-        List of Observer objects
+        Tuple of (list of Observer objects, list of WatchHandler objects)
     """
     observers = []
+    handlers = []
 
     for config in configs:
-        observer = create_observer(config)
+        observer, handler = create_observer(config)
         observer.start()
         observers.append(observer)
+        handlers.append(handler)
         logger.info(f"Started watch: {config.path} (recursive: {config.recursive})")
 
-    return observers
+    return observers, handlers
