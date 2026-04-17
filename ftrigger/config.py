@@ -84,7 +84,7 @@ class WatchConfig:
             # No events specified - use default behavior
             if uses_event_type:
                 logger.warning(
-                    f"Prompt uses '{{event_type}}' or '{{event}}' variable, "
+                    f"Prompt uses '{{events}}' variable, "
                     f"but 'events' field is not specified for watch at {self.path}. "
                     f"Please specify which events to monitor. "
                     f"Supported events: {self.SUPPORTED_EVENTS}"
