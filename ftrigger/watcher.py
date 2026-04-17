@@ -196,47 +196,36 @@ class WatchHandler(FileSystemEventHandler):
 
         return result
 
-    def on_created(self, event):
-        """File creation event"""
-        if not self._should_handle_event("created"):
+    def _handle_event(self, event, event_type: str):
+        """Handle generic file system event
+
+        Args:
+            event: File system event object
+            event_type: Type of event (created, modified, deleted)
+        """
+        if not self._should_handle_event(event_type):
             return
 
         if event.is_directory:
             return
 
-        src_path = self._get_path(event.src_path)
+        path = self._get_path(event.src_path)
 
-        if self._should_process(src_path):
-            logger.info(f"File created: {src_path}")
-            self._trigger_claude(src_path, "created")
+        if self._should_process(path):
+            logger.info(f"File {event_type}: {path}")
+            self._trigger_claude(path, event_type)
+
+    def on_created(self, event):
+        """File creation event"""
+        self._handle_event(event, "created")
 
     def on_modified(self, event):
         """File modification event"""
-        if not self._should_handle_event("modified"):
-            return
-
-        if event.is_directory:
-            return
-
-        src_path = self._get_path(event.src_path)
-
-        if self._should_process(src_path):
-            logger.info(f"File modified: {src_path}")
-            self._trigger_claude(src_path, "modified")
+        self._handle_event(event, "modified")
 
     def on_deleted(self, event):
         """File deletion event"""
-        if not self._should_handle_event("deleted"):
-            return
-
-        if event.is_directory:
-            return
-
-        src_path = self._get_path(event.src_path)
-
-        if self._should_process(src_path):
-            logger.info(f"File deleted: {src_path}")
-            self._trigger_claude(src_path, "deleted")
+        self._handle_event(event, "deleted")
 
     def on_moved(self, event):
         """File move/rename event"""
