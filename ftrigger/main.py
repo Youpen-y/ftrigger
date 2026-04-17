@@ -109,11 +109,17 @@ def main():
 
         # Stop all watchers and clean up resources
         logger.info("Stopping watchers...")
+
+        # Stop observers first to prevent new events from entering
+        for observer in observers:
+            observer.stop()
+
+        # Then cleanup pending timers after observers stopped
         for handler in handlers:
             handler.cleanup()
 
+        # Finally join threads
         for observer in observers:
-            observer.stop()
             observer.join()
 
         logger.info("File Trigger stopped")
