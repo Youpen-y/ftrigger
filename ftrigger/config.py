@@ -92,7 +92,7 @@ class WatchConfig:
                     f"Supported events: {self.SUPPORTED_EVENTS}"
                 )
             else:
-                logger.debug(
+                logger.info(
                     f"No 'events' field specified for watch at {self.path}. "
                     f"Monitoring all supported events: {self.SUPPORTED_EVENTS}"
                 )
