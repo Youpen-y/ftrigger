@@ -83,7 +83,7 @@ def main():
 
     # Start watchers
     try:
-        observers = start_watchers(config.watches)
+        observers, handlers = start_watchers(config.watches)
         logger.info(f"Started {len(observers)} watcher(s)")
 
         # Setup signal handling for graceful shutdown
@@ -107,11 +107,20 @@ def main():
             except KeyboardInterrupt:
                 break
 
-        # Stop all watchers
+        # Stop all watchers and clean up resources
         logger.info("Stopping watchers...")
+
+        # Stop observers first to prevent new events from entering
         for observer in observers:
             observer.stop()
-            observer.join()
+
+        # Then cleanup pending timers after observers stopped
+        for handler in handlers:
+            handler.cleanup()
+
+        # Finally join threads with timeout to prevent indefinite hanging
+        for observer in observers:
+            observer.join(timeout=5)  # 5 second timeout per observer
 
         logger.info("File Trigger stopped")
 

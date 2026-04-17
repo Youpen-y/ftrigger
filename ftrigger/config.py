@@ -30,6 +30,11 @@ class WatchConfig:
     permission_mode: str = "default"  # auto, acceptEdits, bypassPermissions, default, dontAsk
     allowed_tools: Optional[list[str]] = None  # Allowed tools whitelist, e.g. ["Bash(git:*)", "Edit"]
     exclude_patterns: Optional[list[str]] = None  # Exclude path patterns, e.g. [".git", "node_modules", "*.log"]
+    # Event filter: only listen to specified event types
+    events: Optional[list[str]] = None  # ["created", "modified", "deleted", "moved"]
+
+    # Supported event types
+    SUPPORTED_EVENTS = {"created", "modified", "deleted", "moved"}
 
     def __post_init__(self):
         """Configuration validation"""
@@ -56,10 +61,48 @@ class WatchConfig:
         if self.permission_mode not in valid_modes:
             raise ValueError(f"Invalid permission mode: {self.permission_mode}, valid values are: {valid_modes}")
 
+        # Check if prompt uses event type variables
+        uses_event_type = "{events}" in self.prompt
+
+        # Validate event types if provided
+        if self.events is not None:
+            # Reject empty list as configuration error
+            if len(self.events) == 0:
+                raise ValueError(
+                    f"Empty 'events' list specified for watch at {self.path}. "
+                    f"An empty events list will disable all file system monitoring. "
+                    f"Either specify events to monitor or omit the field to use defaults. "
+                    f"Supported events: {self.SUPPORTED_EVENTS}"
+                )
+
+            # Validate event type values
+            invalid_events = set(self.events) - self.SUPPORTED_EVENTS
+            if invalid_events:
+                raise ValueError(
+                    f"Invalid event types: {invalid_events}. "
+                    f"Supported events: {self.SUPPORTED_EVENTS}"
+                )
+        else:
+            # No events specified - use default behavior
+            if uses_event_type:
+                logger.warning(
+                    f"Prompt uses '{{events}}' variable, "
+                    f"but 'events' field is not specified for watch at {self.path}. "
+                    f"Please specify which events to monitor. "
+                    f"Supported events: {self.SUPPORTED_EVENTS}"
+                )
+            else:
+                logger.info(
+                    f"No 'events' field specified for watch at {self.path}. "
+                    f"Monitoring all supported events: {self.SUPPORTED_EVENTS}"
+                )
+            # Set default to all supported events if not specified
+            self.events = list(self.SUPPORTED_EVENTS)
+
         logger.info(f"Loaded watch config: path={self.path}, prompt='{self.prompt}', "
                     f"recursive={self.recursive}, extensions={self.extensions}, "
                     f"permission_mode={self.permission_mode}, allowed_tools={self.allowed_tools}, "
-                    f"exclude_patterns={self.exclude_patterns}")
+                    f"exclude_patterns={self.exclude_patterns}, events={self.events}")
 
 
 @dataclass
@@ -106,6 +149,7 @@ class Config:
                     permission_mode=watch_data.get("permission_mode", "default"),
                     allowed_tools=watch_data.get("allowed_tools"),
                     exclude_patterns=watch_data.get("exclude_patterns"),
+                    events=watch_data.get("events"),
                 )
                 watches.append(watch)
             except KeyError as e:

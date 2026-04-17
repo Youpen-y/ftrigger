@@ -81,8 +81,8 @@ watches:
 ```yaml
 watches:
   - path: ./src
-    prompt: "文件 {event_type}: 处理 {file}"
-    # {event_type} 会被替换为 "created", "modified", "deleted"
+    prompt: "文件 {events}: 处理 {file}"
+    # {events} 会被替换为 "created", "modified", "deleted"
 ```
 
 #### 方案 C：事件过滤器
