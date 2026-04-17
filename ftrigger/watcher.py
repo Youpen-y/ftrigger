@@ -145,6 +145,18 @@ class WatchHandler(FileSystemEventHandler):
                 if debounce_key in self._pending_timers:
                     del self._pending_timers[debounce_key]
 
+            # For events where the file may not exist, check existence
+            # This handles edge cases like:
+            # - File moved out of watched directory (using src_path)
+            # - File deleted (file no longer exists)
+            if event_type in ("deleted", "moved"):
+                if not os.path.exists(file_path):
+                    logger.debug(
+                        f"File {file_path} no longer exists ({event_type} event), "
+                        f"skipping trigger"
+                    )
+                    return
+
             # Format prompt with event type variables
             prompt = self._format_prompt_with_event(
                 self.config.prompt,
@@ -282,9 +294,13 @@ class WatchHandler(FileSystemEventHandler):
         """
         with self._lock:
             for key, timer in list(self._pending_timers.items()):
-                if timer.is_alive():
-                    timer.cancel()
-                    logger.debug(f"Cancelled pending timer during cleanup: {key}")
+                try:
+                    if timer.is_alive():
+                        timer.cancel()
+                        logger.debug(f"Cancelled pending timer during cleanup: {key}")
+                except (ValueError, RuntimeError) as e:
+                    # Timer may have already finished or been cancelled
+                    logger.debug(f"Timer {key} cleanup skipped: {e}")
             self._pending_timers.clear()
 
 
