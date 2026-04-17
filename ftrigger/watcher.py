@@ -4,6 +4,7 @@ Monitors file system changes using watchdog
 """
 
 import os
+import threading
 from logging import getLogger
 from pathlib import Path
 
@@ -22,7 +23,8 @@ class WatchHandler(FileSystemEventHandler):
     def __init__(self, config: WatchConfig):
         super().__init__()
         self.config = config
-        self._last_triggered = {}  # For simple debouncing
+        self._pending_timers = {}  # For delayed trigger strategy
+        self._delay_seconds = 1  # Delay in seconds before triggering
 
     def _should_handle_event(self, event_type: str) -> bool:
         """Check if the event type should be handled
@@ -92,13 +94,54 @@ class WatchHandler(FileSystemEventHandler):
         return True
 
     def _trigger_claude(self, file_path: str, event_type: str, **kwargs):
-        """Trigger Claude CLI
+        """Trigger Claude CLI with delayed strategy
 
         Args:
             file_path: Changed file path
             event_type: Type of event (created, modified, deleted, moved)
             **kwargs: Additional event data (e.g., dest_path for moved events)
+
+        Delayed trigger strategy:
+        - When an event occurs, cancel any pending timer for the same file:event_type
+        - Start a new timer to trigger after delay_seconds
+        - If another event occurs before the timer fires, cancel and restart
+        - This ensures only the final state triggers Claude after rapid changes
         """
+        debounce_key = f"{file_path}:{event_type}"
+
+        # Cancel existing timer if any
+        if debounce_key in self._pending_timers:
+            existing_timer = self._pending_timers[debounce_key]
+            if existing_timer.is_alive():
+                existing_timer.cancel()
+                logger.debug(f"Cancelled pending trigger for: {file_path} ({event_type})")
+            del self._pending_timers[debounce_key]
+
+        # Create a new delayed trigger
+        timer = threading.Timer(
+            self._delay_seconds,
+            self._execute_trigger,
+            args=(file_path, event_type, kwargs)
+        )
+        self._pending_timers[debounce_key] = timer
+        timer.start()
+
+        logger.debug(f"Scheduled delayed trigger for: {file_path} ({event_type}) in {self._delay_seconds}s")
+
+    def _execute_trigger(self, file_path: str, event_type: str, kwargs: dict):
+        """Actually execute Claude CLI trigger
+
+        Args:
+            file_path: Changed file path
+            event_type: Type of event (created, modified, deleted, moved)
+            kwargs: Additional event data (e.g., dest_path for moved events)
+        """
+        debounce_key = f"{file_path}:{event_type}"
+
+        # Clean up pending timer
+        if debounce_key in self._pending_timers:
+            del self._pending_timers[debounce_key]
+
         # Format prompt with event type variables
         prompt = self._format_prompt_with_event(
             self.config.prompt,
@@ -106,19 +149,6 @@ class WatchHandler(FileSystemEventHandler):
             file_path,
             **kwargs
         )
-
-        # Debouncing: only trigger once per file per event type within 5 seconds
-        import time
-
-        debounce_key = f"{file_path}:{event_type}"
-        now = time.time()
-        last_time = self._last_triggered.get(debounce_key, 0)
-
-        if now - last_time < 5:
-            logger.debug(f"Debounce skip: {file_path} ({event_type})")
-            return
-
-        self._last_triggered[debounce_key] = now
 
         # Create permission parameters based on configuration
         perm_mode = self.config.permission_mode
@@ -129,6 +159,7 @@ class WatchHandler(FileSystemEventHandler):
             dont_ask=(perm_mode == "dontAsk"),
         )
 
+        logger.info(f"Triggering Claude CLI: {prompt[:50]}...")
         execute_claude(prompt, file_path, permissions, self.config.allowed_tools)
 
     def _format_prompt_with_event(self, prompt: str, event_type: str, file_path: str, **kwargs) -> str:
