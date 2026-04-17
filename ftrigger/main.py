@@ -118,9 +118,9 @@ def main():
         for handler in handlers:
             handler.cleanup()
 
-        # Finally join threads
+        # Finally join threads with timeout to prevent indefinite hanging
         for observer in observers:
-            observer.join()
+            observer.join(timeout=5)  # 5 second timeout per observer
 
         logger.info("File Trigger stopped")
 

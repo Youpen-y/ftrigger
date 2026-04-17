@@ -115,8 +115,12 @@ class WatchHandler(FileSystemEventHandler):
             if debounce_key in self._pending_timers:
                 existing_timer = self._pending_timers[debounce_key]
                 if existing_timer.is_alive():
-                    existing_timer.cancel()
-                    logger.debug(f"Cancelled pending trigger for: {file_path} ({event_type})")
+                    try:
+                        existing_timer.cancel()
+                        logger.debug(f"Cancelled pending trigger for: {file_path} ({event_type})")
+                    except (ValueError, RuntimeError) as e:
+                        # Timer may have already finished or been cancelled
+                        logger.debug(f"Timer cancel skipped for {file_path} ({event_type}): {e}")
 
             # Create a new delayed trigger
             timer = threading.Timer(
