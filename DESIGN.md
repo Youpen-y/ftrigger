@@ -45,81 +45,110 @@
    - 可以在提示词中让 Claude 自己判断发生了什么
    - 简单的统一处理覆盖大多数场景
 
-### 当前决策（MVP）
+### 当前决策
 
-**不实现事件细分**，原因：
+**已实现事件过滤（方案 C）** ✅
 
-1. ✅ **简单直观** - 一份配置，一种处理
-2. ✅ **覆盖大多数场景** - 代码审查、文档检查等
-3. ✅ **易于理解** - 用户不需要想太多
-4. ✅ **降低维护成本** - 代码和配置都更简洁
-
-### 未来增强方案
-
-如果用户反馈有此需求，可以考虑以下实现方式：
-
-#### 方案 A：完整的事件配置
-
-```yaml
-watches:
-  - path: ./src
-    prompt: "默认处理"  # fallback
-    events:  # 可选，不配置则使用统一处理
-      created:
-        prompt: "检查新文件的设计和结构"
-        extensions: [".py", ".js"]
-      modified:
-        prompt: "审查代码改动"
-        extensions: [".py", ".js"]
-      deleted:
-        prompt: "清理相关引用"
-        extensions: [".py", ".js"]
-```
-
-#### 方案 B：事件类型变量
+采用**事件过滤器**方案，在配置中添加 `events` 字段：
 
 ```yaml
 watches:
   - path: ./src
     prompt: "文件 {events}: 处理 {file}"
-    # {events} 会被替换为 "created", "modified", "deleted"
+    events: ["created", "modified"]  # 只监控创建和修改
+    extensions: [".py"]
+
+  - path: ./uploads
+    prompt: "新文件已创建: {file}"
+    events: ["created"]  # 只监控创建事件
 ```
 
-#### 方案 C：事件过滤器
+**实现优势：**
+1. ✅ **简单直观** - 清晰的配置，易于理解
+2. ✅ **灵活控制** - 可选择监控的事件类型
+3. ✅ **向后兼容** - 不指定 `events` 则监控所有事件
+4. ✅ **变量支持** - `{events}` 变量在 prompt 中可用
+
+**支持的事件类型：**
+- `created` - 文件/目录创建
+- `modified` - 文件/目录修改
+- `deleted` - 文件/目录删除
+- `moved` - 文件/目录移动/重命名
+
+**Prompt 变量：**
+- `{events}` - 当前事件类型（created、modified、deleted、moved）
+- `{file}` / `{path}` - 文件路径
+- `{src_path}` / `{src}` - 源路径（仅 moved 事件）
+- `{dest_path}` / `{dest}` - 目标路径（仅 moved 事件）
+
+### 未来增强方案
+
+当前实现已满足基本需求，未来可考虑以下增强：
+
+#### 方案 A：完整的事件配置（可选）
+
+为不同事件类型配置不同的处理逻辑：
 
 ```yaml
 watches:
   - path: ./src
-    prompt: "只处理新增文件"
-    events: ["created"]  # 只监控创建事件
-
-  - path: ./src
-    prompt: "只处理修改"
-    events: ["modified"]  # 只监控修改事件
+    prompt: "默认处理"  # fallback
+    events_config:  # 可选的详细配置
+      created:
+        prompt: "检查新文件的设计和结构"
+      modified:
+        prompt: "审查代码改动"
+      deleted:
+        prompt: "清理相关引用"
 ```
+
+**优先级：** 低 - 当前简单的 `events` 字段已满足大部分需求
+
+#### 方案 B：事件后处理钩子（可选）
+
+添加事件后处理钩子，用于执行自定义命令：
+
+```yaml
+watches:
+  - path: ./src
+    prompt: "Review {file}"
+    events: ["created"]
+    post_trigger:
+      - command: "git add {file}"
+      - command: "npm run lint {file}"
+```
+
+**优先级：** 低 - 高级功能，按需实现
 
 ### 实现注意事项
 
-1. **事件去重**
-   - 编辑器可能同时触发多个事件
-   - 需要防抖机制避免重复触发
+1. **防抖机制** ✅ 已实现
+   - 使用 `threading.Timer` 延迟触发策略
+   - 1 秒延迟合并快速变化
+   - 按文件:事件类型组合独立跟踪
 
-2. **事件顺序**
-   - 不能保证事件按预期顺序到达
-   - 需要考虑事件乱序的情况
+2. **事件去重** ✅ 已实现
+   - 相同文件和事件类型的快速变化会被合并
+   - 使用 `threading.Lock` 保证线程安全
 
-3. **向后兼容**
-   - 如果添加此功能，需要保持现有配置的兼容性
-   - 未配置细分时应使用统一处理
+3. **向后兼容** ✅ 已实现
+   - 未配置 `events` 时默认监控所有事件类型
+   - 现有配置无需修改即可继续使用
 
 ### 相关文件
 
-- `ftrigger/watcher.py` - 当前事件处理实现
-- `ftrigger/config.py` - 配置加载逻辑
+- `ftrigger/watcher.py` - 事件过滤和防抖实现
+- `ftrigger/config.py` - 配置加载和验证（`events` 字段）
+- `ftrigger/main.py` - 优雅关闭顺序（先停止 observer，再清理 timer）
+
+### 实现状态
+
+✅ **已完成** (2026-04-17)
 
 ### 决策日期
 
-2026-04-14
+2026-04-14（初始设计）
+2026-04-17（实现完成）
 
 ---
 
@@ -1842,6 +1871,703 @@ ftrigger --logs --watch backend
 - `ftrigger/watcher.py` - 日志输出添加路径标识
 - `ftrigger/interactive.py` - 交互模式路径选择
 - `README.md` - 更新使用文档
+
+### 决策日期
+
+2026-04-16
+
+---
+
+## Prompt 模板和文件引用设计讨论
+
+### 背景
+
+当前 ftrigger 只支持在 `config.yaml` 中直接编写 prompt 字符串，存在以下限制：
+
+1. **Prompt 管理困难** - 复杂的 prompt 难以在 YAML 中维护
+2. **复用性差** - 无法在多个 watch 规则间共享 prompt 模板
+3. **版本控制不便** - 修改 prompt 需要编辑配置文件
+4. **协作困难** - 非技术人员难以维护和更新 prompt
+
+### 需求分析
+
+#### 典型使用场景
+
+**场景 1：复杂数学论文评审**
+
+```
+Review the mathematical paper {file} according to:
+
+1. Structure and Logic
+   - Are the theorems clearly stated?
+   - Are the proofs complete and rigorous?
+   - Are there logical gaps?
+
+2. Mathematical Correctness
+   - Verify all equations
+   - Check assumptions
+   - Validate derivations
+
+3. Clarity and Presentation
+   - Is the notation consistent?
+   - Are the explanations clear?
+   - Are the examples helpful?
+
+Please provide detailed feedback.
+```
+
+这种复杂的 prompt 在 YAML 中维护很不方便。
+
+**场景 2：共享指南文档**
+
+多个 watch 规则需要引用同一份指南文档：
+
+```yaml
+watches:
+  - path: ./backend
+    prompt: "Review {file} according to guidelines at {include:docs/review-guidelines.md}"
+    
+  - path: ./frontend
+    prompt: "Review {file} according to guidelines at {include:docs/review-guidelines.md}"
+```
+
+**场景 3：模板变量复用**
+
+希望将常用文本片段定义为变量，在多个地方引用：
+
+```yaml
+template_vars:
+  security_guidelines: /path/to/security-checklist.md
+  coding_standards: /path/to/coding-standards.md
+
+watches:
+  - path: ./src
+    prompt: |
+      Review {file} for:
+      - Security: {include:security_guidelines}
+      - Code quality: {include:coding_standards}
+```
+
+### 设计方案
+
+#### 方案 A：从文件加载 Prompt（推荐实现）⭐
+
+添加 `prompt_file` 字段，支持从外部文件加载 prompt：
+
+```yaml
+watches:
+  - path: /tmp/test
+    prompt_file: /path/to/prompts/review.md
+    extensions: [".py"]
+```
+
+**实现要点：**
+
+```python
+@dataclass
+class WatchConfig:
+    path: str
+    prompt: Optional[str] = None
+    prompt_file: Optional[str] = None  # 新增
+    
+    def __post_init__(self):
+        # 加载 prompt 文件
+        if self.prompt_file and not self.prompt:
+            prompt_path = Path(self.prompt_file)
+            if not prompt_path.is_absolute():
+                # 相对于配置文件目录
+                config_dir = Path(self._config_file).parent
+                prompt_path = config_dir / self.prompt_file
+            
+            if prompt_path.exists():
+                self.prompt = prompt_path.read_text()
+            else:
+                raise FileNotFoundError(f"Prompt file not found: {self.prompt_file}")
+        
+        # 验证至少有一个 prompt
+        if not self.prompt:
+            raise ValueError("Either 'prompt' or 'prompt_file' must be specified")
+```
+
+**优点：**
+- ✅ 简单直观
+- ✅ 支持任意格式的 prompt
+- ✅ 可以使用版本控制系统管理 prompt 文件
+- ✅ 便于协作和维护
+
+#### 方案 B：支持文件引用指令 {include:}（推荐实现）⭐
+
+在 prompt 中使用 `{include:path}` 引用外部文件：
+
+```yaml
+watches:
+  - path: /tmp/test
+    prompt: |
+      Review {file} according to our guidelines:
+      
+      {include:docs/review-guidelines.md}
+      
+      Please focus on security and performance.
+    extensions: [".py"]
+```
+
+**实现要点：**
+
+```python
+import re
+
+def resolve_includes(prompt: str, base_dir: str) -> str:
+    """解析 {include:path} 指令
+    
+    Args:
+        prompt: 原始 prompt
+        base_dir: 相对路径基准目录
+    
+    Returns:
+        解析后的 prompt
+    """
+    pattern = r'\{include:([^}]+)\}'
+    
+    def replace_include(match):
+        include_path = match.group(1).strip()
+        full_path = Path(base_dir) / include_path
+        
+        if full_path.exists():
+            content = full_path.read_text()
+            logger.debug(f"Included file: {full_path}")
+            return content.strip()
+        else:
+            logger.warning(f"Include file not found: {full_path}")
+            return f"[Include not found: {include_path}]"
+    
+    return re.sub(pattern, replace_include, prompt)
+```
+
+**优点：**
+- ✅ 灵活性高，可以混合使用
+- ✅ 支持嵌套（被包含的文件可以再包含其他文件）
+- ✅ 便于模块化管理 prompt
+
+**安全考虑：**
+
+- 需要限制可以包含的文件路径
+- 防止路径遍历攻击（如 `../../../etc/passwd`）
+- 设置最大递归深度防止循环引用
+
+```python
+def resolve_includes(prompt: str, base_dir: str, max_depth: int = 5) -> str:
+    """安全的 include 解析
+    
+    Args:
+        prompt: 原始 prompt
+        base_dir: 基准目录
+        max_depth: 最大递归深度
+    """
+    base_path = Path(base_dir).resolve()
+    pattern = r'\{include:([^}]+)\}'
+    depth = 0
+    
+    def replace_include(match):
+        nonlocal depth
+        if depth >= max_depth:
+            raise ValueError(f"Max include depth ({max_depth}) exceeded")
+        
+        include_path = match.group(1).strip()
+        full_path = (base_path / include_path).resolve()
+        
+        # 安全检查：确保包含的文件在基准目录下
+        try:
+            full_path.relative_to(base_path)
+        except ValueError:
+            raise ValueError(f"Include path outside base directory: {include_path}")
+        
+        if full_path.exists():
+            depth += 1
+            content = full_path.read_text()
+            # 递归解析被包含文件中的 include
+            content = resolve_includes(content, str(full_path.parent), max_depth - depth)
+            depth -= 1
+            return content.strip()
+        else:
+            raise FileNotFoundError(f"Include file not found: {full_path}")
+    
+    return re.sub(pattern, replace_include, prompt)
+```
+
+#### 方案 C：模板变量系统
+
+支持在 prompt 中使用模板变量：
+
+```yaml
+template_vars:
+  project_name: "My Project"
+  security_guidelines: /path/to/security.md
+
+watches:
+  - path: /tmp/test
+    prompt: |
+      Review {file} from {project_name}
+      
+      Security Guidelines:
+      {include:security_guidelines}
+    extensions: [".py"]
+```
+
+**实现要点：**
+
+```python
+def render_template(template: str, variables: dict, base_dir: str = ".") -> str:
+    """渲染模板
+    
+    Args:
+        template: 模板字符串
+        variables: 变量字典
+        base_dir: 基准目录（用于解析 include）
+    
+    Returns:
+        渲染后的字符串
+    """
+    result = template
+    
+    # 先处理 include（因为它们可能包含变量）
+    result = resolve_includes(result, base_dir)
+    
+    # 然后替换变量
+    for key, value in variables.items():
+        # 支持简单的字符串替换
+        result = result.replace(f"{{{key}}}", str(value))
+        
+        # 如果值是文件路径，读取文件内容
+        if key.endswith("_file") or key.endswith("_path"):
+            file_path = Path(base_dir) / value
+            if file_path.exists():
+                result = result.replace(f"{{{key}}}", file_path.read_text())
+    
+    return result
+```
+
+#### 方案 D：Jinja2 模板引擎（高级）
+
+使用 Jinja2 提供完整的模板功能：
+
+```yaml
+watches:
+  - path: /tmp/test
+    prompt_file: templates/review.j2
+    template_vars:
+      guidelines_file: /path/to/guidelines.md
+    extensions: [".py"]
+```
+
+**review.j2 模板：**
+
+```jinja2
+Review {{ file_path }} for issues:
+
+## Guidelines
+{% include guidelines_file %}
+
+## Focus Areas
+{% for area in focus_areas %}
+- {{ area }}
+{% endfor %}
+
+Please check:
+- Security vulnerabilities
+- Performance issues
+- Code style
+```
+
+**优点：**
+- ✅ 功能强大
+- ✅ 支持条件、循环等复杂逻辑
+- ✅ 成熟的生态系统
+
+**缺点：**
+- ❌ 增加依赖
+- ❌ 复杂度较高
+- ❌ 学习曲线
+
+### 推荐实现方案
+
+#### 阶段 1：基础支持（MVP）⭐
+
+实现方案 A 和 B 的组合：
+
+```yaml
+watches:
+  # 方式 1：直接字符串
+  - path: /tmp/test1
+    prompt: "Review {file} for bugs"
+  
+  # 方式 2：从文件读取
+  - path: /tmp/test2
+    prompt_file: prompts/review.txt
+  
+  # 方式 3：混合使用
+  - path: /tmp/test3
+    prompt: |
+      Review {file} according to:
+      
+      {include:docs/guidelines.md}
+      
+      Focus on security.
+```
+
+**优先级：**
+- `prompt_file` 支持 - 高优先级
+- `{include:}` 指令 - 高优先级
+- 安全限制 - 高优先级
+
+#### 阶段 2：模板变量（可选）
+
+添加简单的变量替换功能：
+
+```yaml
+# 全局变量定义
+template_vars:
+  author: "Your Name"
+  version: "1.0.0"
+
+watches:
+  - path: /tmp/test
+    prompt: |
+      Review {file} by {author}
+      Version: {version}
+```
+
+#### 阶段 3：高级模板（按需）
+
+如果用户需要更复杂的功能，考虑集成 Jinja2。
+
+### 文件组织建议
+
+推荐的目录结构：
+
+```
+project/
+├── config.yaml              # 主配置文件
+├── prompts/                  # Prompt 模板目录
+│   ├── review.md            # 代码评审 prompt
+│   ├── security-check.md    # 安全检查 prompt
+│   └── wiki-update.md       # Wiki 更新 prompt
+├── templates/               # 模板变量
+│   ├── guidelines/          # 指南文档
+│   │   ├── python.md
+│   │   └── javascript.md
+│   └── checklists/          # 检查清单
+│       ├── security.md
+│       └── performance.md
+└── ftrigger/
+    └── ...
+```
+
+**配置示例：**
+
+```yaml
+# config.yaml
+log_level: INFO
+
+# 全局模板变量
+template_vars:
+  project_name: "ACME Project"
+  security_guideline: templates/guidelines/security.md
+
+watches:
+  # Python 代码审查
+  - path: ./backend
+    prompt_file: prompts/review.md
+    template_vars:
+      language: "Python"
+      style_guide: "templates/guidelines/python.md"
+    extensions: [".py"]
+  
+  # Wiki 更新
+  - path: ./wiki/sources
+    prompt_file: prompts/wiki-update.md
+    extensions: [".md"]
+```
+
+**prompts/review.md：**
+
+```markdown
+Review {file} from {project_name}
+
+Language: {language}
+
+## Style Guidelines
+{include:style_guide}
+
+## Security Guidelines
+{include:security_guideline}
+
+Please provide feedback on:
+- Code quality
+- Security issues
+- Performance
+- Best practices
+```
+
+### 安全考虑
+
+1. **路径限制**
+   - 只允许包含基准目录下的文件
+   - 禁止路径遍历（`../`）
+   - 验证文件扩展名白名单
+
+2. **递归限制**
+   - 最大 include 深度：5 层
+   - 防止循环引用
+
+3. **文件大小限制**
+   - 单个文件最大 1MB
+   - 总 prompt 最大 10KB
+
+4. **权限检查**
+   - 确保文件可读
+   - 记录所有文件访问
+
+### 实现示例
+
+**prompt_template.py：**
+
+```python
+"""Prompt template utilities for ftrigger"""
+
+import re
+from pathlib import Path
+from typing import Optional, Dict
+from logging import getLogger
+
+logger = getLogger(__name__)
+
+# 安全配置
+MAX_INCLUDE_DEPTH = 5
+MAX_FILE_SIZE = 1024 * 1024  # 1MB
+MAX_PROMPT_SIZE = 1024 * 10  # 10KB
+
+
+class PromptTemplate:
+    """Prompt template manager"""
+    
+    def __init__(self, base_dir: str = "."):
+        self.base_dir = Path(base_dir).resolve()
+    
+    def load(
+        self,
+        prompt: Optional[str] = None,
+        prompt_file: Optional[str] = None,
+        variables: Optional[Dict[str, str]] = None
+    ) -> str:
+        """加载并处理 prompt 模板
+        
+        Args:
+            prompt: 直接 prompt 字符串
+            prompt_file: prompt 文件路径
+            variables: 模板变量
+        
+        Returns:
+            处理后的 prompt
+        """
+        # 从文件加载
+        if prompt_file:
+            content = self._load_file(prompt_file)
+            prompt = prompt or content
+        
+        if not prompt:
+            raise ValueError("Either 'prompt' or 'prompt_file' required")
+        
+        # 解析 include
+        result = self._resolve_includes(prompt)
+        
+        # 替换变量
+        if variables:
+            result = self._substitute_variables(result, variables)
+        
+        # 大小检查
+        if len(result) > MAX_PROMPT_SIZE:
+            logger.warning(f"Prompt too large: {len(result)} > {MAX_PROMPT_SIZE}")
+        
+        return result
+    
+    def _load_file(self, file_path: str) -> str:
+        """安全加载文件"""
+        path = Path(file_path)
+        if not path.is_absolute():
+            path = self.base_dir / file_path
+        
+        # 安全检查
+        path = path.resolve()
+        try:
+            path.relative_to(self.base_dir)
+        except ValueError:
+            raise PermissionError(f"File outside base directory: {path}")
+        
+        if not path.exists():
+            raise FileNotFoundError(f"File not found: {path}")
+        
+        # 大小检查
+        size = path.stat().st_size
+        if size > MAX_FILE_SIZE:
+            raise ValueError(f"File too large: {size} > {MAX_FILE_SIZE}")
+        
+        return path.read_text()
+    
+    def _resolve_includes(self, text: str, depth: int = 0) -> str:
+        """递归解析 include 指令"""
+        if depth >= MAX_INCLUDE_DEPTH:
+            raise ValueError(f"Max include depth exceeded")
+        
+        pattern = r'\{include:([^}]+)\}'
+        
+        def replace(match):
+            include_path = match.group(1).strip()
+            content = self._load_file(include_path)
+            # 递归处理被包含的文件
+            return self._resolve_includes(content, depth + 1)
+        
+        return re.sub(pattern, replace, text)
+    
+    def _substitute_variables(self, text: str, variables: Dict[str, str]) -> str:
+        """替换模板变量"""
+        result = text
+        for key, value in variables.items():
+            placeholder = f"{{{key}}}"
+            
+            # 如果值是文件路径，读取内容
+            if key.endswith("_file") or key.endswith("_path"):
+                try:
+                    value = self._load_file(value)
+                except (FileNotFoundError, PermissionError):
+                    logger.warning(f"Could not load file for {key}: {value}")
+            
+            result = result.replace(placeholder, str(value))
+        
+        return result
+```
+
+### 使用示例
+
+**示例 1：简单的文件包含**
+
+```yaml
+# prompts/code-review.md
+# 代码评审指南
+
+请检查以下方面：
+
+1. **代码质量**
+   - 命名是否清晰？
+   - 逻辑是否正确？
+   - 是否有重复代码？
+
+2. **安全性**
+   - 是否有注入漏洞？
+   - 权限检查是否完善？
+   - 敏感数据是否加密？
+
+3. **性能**
+   - 是否有性能瓶颈？
+   - 数据库查询是否优化？
+```
+
+```yaml
+# config.yaml
+watches:
+  - path: ./src
+    prompt: "Review {file}:\n\n{include:prompts/code-review.md}"
+    extensions: [".py"]
+```
+
+**示例 2：模块化 prompt**
+
+```
+prompts/
+├── common/
+│   ├── header.md       # 通用头部
+│   └── footer.md       # 通用尾部
+├── reviews/
+│   ├── python.md       # Python 特定
+│   └── javascript.md   # JavaScript 特定
+└── security/
+    └── checklist.md    # 安全检查清单
+```
+
+```yaml
+# config.yaml
+watches:
+  - path: ./backend
+    prompt: |
+      {include:prompts/common/header.md}
+      
+      Language: Python
+      {include:prompts/reviews/python.md}
+      {include:prompts/security/checklist.md}
+      
+      {include:prompts/common/footer.md}
+    extensions: [".py"]
+```
+
+### 功能优先级
+
+| 功能 | 优先级 | 复杂度 | 价值 |
+|------|--------|--------|------|
+| **prompt_file** | 高 | 低 | ⭐⭐⭐⭐⭐ |
+| **{include:}** | 高 | 中 | ⭐⭐⭐⭐⭐ |
+| **安全限制** | 高 | 中 | ⭐⭐⭐⭐⭐ |
+| **模板变量** | 中 | 低 | ⭐⭐⭐ |
+| **Jinja2 集成** | 低 | 高 | ⭐⭐ |
+
+### 实现路线图
+
+```
+v0.2.0 (用户体验改进)
+├── --status 参数
+└── --logs 参数
+    ↓
+v0.2.1 (路径过滤)
+└── 路径别名和过滤
+    ↓
+v0.3.0 (交互模式)
+└── 交互式界面
+    ↓
+v0.4.0 (Prompt 模板) ⭐ 新增
+├── prompt_file 支持
+├── {include:} 指令
+├── 安全限制
+└── 模板变量
+    ↓
+v0.5.0 (高级模板 - 可选)
+└── Jinja2 集成
+```
+
+### 向后兼容
+
+所有新功能都是可选的，现有配置完全兼容：
+
+```yaml
+# 旧配置仍然有效
+watches:
+  - path: /tmp/test
+    prompt: "Review {file}"
+    extensions: [".py"]
+
+# 新功能是可选增强
+watches:
+  - path: /tmp/test
+    prompt_file: prompts/review.md  # 新功能
+    extensions: [".py"]
+```
+
+### 相关文件
+
+- `ftrigger/config.py` - 添加 prompt_file 字段和加载逻辑
+- `ftrigger/prompt_template.py` - 新增：模板处理工具类
+- `ftrigger/executor.py` - 集成模板加载
+- `prompts/` - 新增：示例 prompt 模板目录
+- `templates/` - 新增：模板变量目录
+- `README.md` - 更新使用文档
+- `DESIGN.md` - 本设计文档
 
 ### 决策日期
 
