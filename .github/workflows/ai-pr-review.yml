@@ -51,6 +51,7 @@ jobs:
           python3 << 'PYEOF'
           import json
           import os
+          import sys
           import urllib.request
 
           with open("pr_files.json", "r") as f:
@@ -61,17 +62,34 @@ jobs:
 
           manifest = []
           total_lines = 0
+          failed_count = 0
+
+          # Binary file extensions to skip
+          BINARY_EXTENSIONS = {
+              '.png', '.jpg', '.jpeg', '.gif', '.ico', '.svg', '.webp',
+              '.pdf', '.zip', '.tar', '.gz', '.rar', '.7z',
+              '.exe', '.dll', '.so', '.dylib', '.bin',
+              '.woff', '.woff2', '.ttf', '.eot', '.otf',
+              '.mp3', '.mp4', '.avi', '.mov', '.wav',
+              '.pyc', '.class', '.jar', '.war',
+          }
 
           for file in files:
               filename = file["filename"]
-              changes = file.get("changes", 0)
 
               # Skip deleted files
               if file.get("status") == "removed":
                   continue
 
+              # Skip binary files by extension
+              _, ext = os.path.splitext(filename.lower())
+              if ext in BINARY_EXTENSIONS:
+                  print(f"Skipping binary file: {filename}", file=sys.stderr)
+                  continue
+
               # Check if likely text file (has patch)
               if not file.get("patch"):
+                  print(f"Skipping file without patch: {filename}", file=sys.stderr)
                   continue
 
               # Fetch raw content
@@ -81,21 +99,28 @@ jobs:
                       content = response.read().decode('utf-8', errors='ignore')
                       line_count = len(content.split('\n'))
 
-                      # Save content
-                      safe_name = filename.replace('/', '_')
+                      # Use __ as delimiter to avoid filename collisions
+                      safe_name = filename.replace('/', '__').replace('\\', '__')
                       with open(f"files_content/{safe_name}", "w") as out:
                           out.write(content)
 
                       manifest.append(f"{filename}:{line_count}:{safe_name}")
                       total_lines += line_count
               except Exception as e:
-                  print(f"Failed to fetch {filename}: {e}")
+                  failed_count += 1
+                  print(f"Error fetching {filename}: {e}", file=sys.stderr)
 
           with open("files_manifest.txt", "w") as f:
               for m in manifest:
                   f.write(m + "\n")
 
-          print(f"Fetched {len(manifest)} files, {total_lines} total lines")
+          print(f"Fetched {len(manifest)} files, {total_lines} total lines", file=sys.stderr)
+          print(f"Failed to fetch {failed_count} files", file=sys.stderr)
+
+          # Fail if more than 50% of files failed to fetch
+          if len(manifest) > 0 and failed_count > len(manifest):
+              print("Too many failures, aborting", file=sys.stderr)
+              sys.exit(1)
           PYEOF
 
       - name: Install anthropic
@@ -109,6 +134,7 @@ jobs:
         run: |
           python3 << 'EOF'
           import os
+          import sys
           import anthropic
 
           diff = open("pr.diff", encoding="utf-8", errors="ignore").read()
@@ -120,6 +146,7 @@ jobs:
           # Load file manifest
           manifest = []
           files_content = {}
+
           try:
               with open("files_manifest.txt", "r") as f:
                   for line in f:
@@ -128,15 +155,19 @@ jobs:
                           filename, line_count, safe_name = parts
                           manifest.append((filename, int(line_count), safe_name))
 
-              # Load file contents
+              # Load file contents with proper error handling
               for filename, line_count, safe_name in manifest:
                   try:
                       with open(f"files_content/{safe_name}", "r") as f:
                           files_content[filename] = f.read()
-                  except:
-                      pass
-          except:
-              pass
+                  except Exception as e:
+                      print(f"Warning: Could not load {filename}: {e}", file=sys.stderr)
+
+              if not manifest:
+                  print("Warning: No file contents loaded, reviewing with diff only", file=sys.stderr)
+
+          except Exception as e:
+              print(f"Warning: Could not load manifest: {e}", file=sys.stderr)
 
           client = anthropic.Anthropic(
               api_key=os.environ["ANTHROPIC_AUTH_TOKEN"],
@@ -154,6 +185,11 @@ jobs:
 
           **Repository:** {os.environ.get("GITHUB_REPOSITORY", "unknown")}
           **Files changed:** {len(manifest)}
+
+          **IMPORTANT:**
+          - Focus primarily on the **Diff** for what actually changed
+          - Use **File Contents** as context to understand the surrounding code
+          - Do NOT critique code that wasn't modified in this PR
 
           **Complete file contents (new version):**
           {files_section if files_section else "(No file contents available)"}
