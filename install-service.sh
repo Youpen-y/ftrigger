@@ -148,10 +148,11 @@ check_config() {
 log_level: INFO
 
 watches:
-  - path: $(pwd)
+  - path: /path/to/your/project
     prompt: "Review the changed file {file} and suggest improvements."
     recursive: true
     extensions: [".py", ".js", ".ts", ".yaml", ".md"]
+    events: ["created", "modified"]
 EOF
         log_success "Created example config: $config_path"
         log_warning "Please edit the config file before starting the service"
@@ -286,18 +287,20 @@ EOF
 # Example config for instance 1
 log_level: INFO
 watches:
-  - path: $(pwd)
+  - path: /path/to/python/project
     prompt: "Review {file}"
     extensions: [".py"]
+    events: ["created", "modified"]
 EOF
 
     cat > "$HOME/.config/ftrigger/project2.yaml" << EOF
 # Example config for instance 2
 log_level: DEBUG
 watches:
-  - path: $(pwd)
+  - path: /path/to/javascript/project
     prompt: "Analyze {file}"
     extensions: [".js", ".ts"]
+    events: ["created", "modified"]
 EOF
 
     log_success "Created example configs:"
