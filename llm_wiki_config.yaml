@@ -3,6 +3,7 @@ log_level: INFO
 
 watches:
   - path: /path/to/llm-wiki/raw/sources
+    events: ["created"]
     prompt: "LLM Wiki sources directory has a new file {file}. Based on the new content and CLAUDE.md, please process and update the wiki accordingly."
     recursive: true
     # No extensions set, monitor all file types
