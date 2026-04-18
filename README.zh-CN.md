@@ -15,13 +15,15 @@
 
 ## 功能特性
 
-- 🔍 监控指定目录的文件变化（创建、修改、删除、移动）
+- 🔍 监控路径变化（创建、修改、删除、移动）
+    - 📁 **目录监控** - 递归监控整个目录
+    - 📄 **单文件监控** - 监控单个文件的变化
 - 🎯 **事件过滤** - 选择要监控的事件类型
 - ⏱️ **智能防抖** - 将快速变化合并为单次触发（1秒延迟）
 - 🤖 自动触发 Claude CLI 执行配置的提示词
 - ⚙️ 支持多个监控路径，每个路径独立配置
 - 📝 提示词支持变量替换（如 `{file}`、`{events}`）
-- 🎯 支持文件扩展名过滤
+- 🎯 支持文件扩展名过滤（仅目录模式）
 - 🚫 支持排除模式（如 `.git`、`node_modules`）
 - 🔄 跨平台支持（Linux、macOS、Windows）
 - 🛡️ 权限控制和工具白名单，增强安全性
@@ -42,6 +44,7 @@
 ```yaml
 watches:
   - path: /path/to/llm-wiki/raw/sources
+    events: ["created"]
     prompt: "LLM Wiki 源目录有新文件 {file}。基于新内容和 CLAUDE.md，请处理并相应更新 wiki。"
     recursive: true
     permission_mode: bypassPermissions
@@ -123,7 +126,8 @@ log_level: INFO
 
 watches:
   - path: /path/to/your/project
-    prompt: "Review the changed file {file} and suggest improvements."
+    events: ["modified"]
+    prompt: "Review the changed file {file} and do something thing you want."
     recursive: true
     extensions: [".py", ".js", ".ts"]
 ```
@@ -221,7 +225,7 @@ systemctl --user start ftrigger@dev
 systemctl --user start ftrigger@prod
 ```
 
-详细文档请参考 `ftrigger.systemd.tutorial.md`。
+详细文档请参考 [`ftrigger.systemd.tutorial.md`](./ftrigger.systemd.tutorial.md)。
 
 ## 配置说明
 
@@ -236,14 +240,14 @@ systemctl --user start ftrigger@prod
 
 | 字段 | 类型 | 必需 | 说明 |
 |------|------|------|------|
-| `path` | string | 是 | 要监控的目录路径（必须存在且为目录） |
+| `path` | string | 是 | 要监控的文件或目录路径（必须存在） |
 | `prompt` | string | 是 | 触发时执行的提示词 |
-| `recursive` | boolean | 否 | 是否递归监控子目录（默认：true） |
-| `extensions` | list | 否 | 只监控指定扩展名的文件（可选） |
-| `events` | list | 否 | 要监控的事件类型：["created", "modified", "deleted", "moved"]（默认：全部） |
+| `events` | list | 是 | 要监控的事件类型：["created", "modified", "deleted", "moved"] |
+| `recursive` | boolean | 否 | 是否递归监控子目录（默认：true，仅目录模式） |
+| `extensions` | list | 否 | 只监控指定扩展名的文件（仅目录模式） |
 | `permission_mode` | string | 否 | Claude CLI 权限模式（默认：default） |
 | `allowed_tools` | list | 否 | 允许的工具白名单（可选） |
-| `exclude_patterns` | list | 否 | 排除路径模式（可选） |
+| `exclude_patterns` | list | 否 | 排除路径模式（仅目录模式） |
 
 ### 权限模式 (permission_mode)
 
@@ -314,6 +318,23 @@ prompt: "文件 {events}：检查 {file} 的代码质量"
 ```
 
 ## 使用示例
+
+### 监控单个文件
+
+监控特定配置文件或重要文档：
+
+```yaml
+watches:
+  - path: /etc/nginx/nginx.conf
+    prompt: "Nginx 配置文件 {file} 已更改。请验证语法并检查潜在问题。"
+    events: ["modified"]
+
+  - path: /home/user/重要文档.md
+    prompt: "文档 {file} 已修改。请审查并总结更改内容。"
+    events: ["modified"]
+```
+
+**注意：** 监控单个文件时，`recursive` 和 `extensions` 选项会自动被忽略。
 
 ### 监控 Python 项目
 
@@ -426,7 +447,8 @@ watches:
 
 ### Q: 如何停止监控？
 
-按 `Ctrl+C` 或发送 `SIGTERM` 信号即可优雅退出。
+- **如果是以服务运行**：使用 `systemctl --user stop ftrigger` 或相应的服务管理命令停止服务
+- **如果是直接运行**：按 `Ctrl+C` 或发送 `SIGTERM` 信号以优雅关闭
 
 ### Q: 监控不到文件变化？
 

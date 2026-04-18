@@ -15,13 +15,15 @@ File monitoring tool for Claude CLI - Automatically executes Claude CLI commands
 
 ## Features
 
-- 🔍 Monitor file changes in specified directories (creation, modification, deletion, move)
+- 🔍 Monitor path changes (creation, modification, deletion, move)
+    - 📁 **Directory monitoring** - Watch entire directories recursively
+    - 📄 **Single file monitoring** - Watch individual files for changes
 - 🎯 **Event filtering** - Select which event types to monitor
 - ⏱️ **Smart debouncing** - Coalesce rapid changes into single trigger (1s delay)
 - 🤖 Automatically trigger Claude CLI with configured prompts
 - ⚙️ Support multiple watch paths with independent configurations
 - 📝 Prompt variable substitution (e.g., `{file}`, `{events}`)
-- 🎯 File extension filtering support
+- 🎯 File extension filtering support (directories only)
 - 🚫 Exclude patterns support (e.g., `.git`, `node_modules`)
 - 🔄 Cross-platform support (Linux, macOS, Windows)
 - 🛡️ Permission control and tool whitelisting for security
@@ -42,6 +44,7 @@ Unlike traditional scheduled cron jobs, **ftrigger provides real-time, event-dri
 ```yaml
 watches:
   - path: /path/to/llm-wiki/raw/sources
+    events: ["created"]
     prompt: "LLM Wiki sources directory has a new file {file}. Based on the new content and CLAUDE.md, please process and update the wiki accordingly."
     recursive: true
     permission_mode: bypassPermissions
@@ -123,7 +126,8 @@ log_level: INFO
 
 watches:
   - path: /path/to/your/project
-    prompt: "Review the changed file {file} and suggest improvements."
+    events: ["modified"]
+    prompt: "Review the changed file {file} and do something thing you want."
     recursive: true
     extensions: [".py", ".js", ".ts"]
 ```
@@ -221,7 +225,7 @@ systemctl --user start ftrigger@dev
 systemctl --user start ftrigger@prod
 ```
 
-See `ftrigger.systemd.tutorial.md` for detailed documentation.
+See [`ftrigger.systemd.tutorial.md`](./ftrigger.systemd.tutorial.md) for detailed documentation.
 
 ## Configuration
 
@@ -236,14 +240,14 @@ See `ftrigger.systemd.tutorial.md` for detailed documentation.
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `path` | string | Yes | Directory path to monitor (must exist and be a directory) |
+| `path` | string | Yes | File or directory path to monitor (must exist) |
 | `prompt` | string | Yes | Prompt to execute when triggered |
-| `recursive` | boolean | No | Whether to monitor subdirectories recursively (default: true) |
-| `extensions` | list | No | Only monitor files with specified extensions (optional) |
-| `events` | list | No | Event types to monitor: ["created", "modified", "deleted", "moved"] (default: all) |
+| `events` | list | Yes | Event types to monitor: ["created", "modified", "deleted", "moved"] |
+| `recursive` | boolean | No | Whether to monitor subdirectories recursively (default: true, directories only) |
+| `extensions` | list | No | Only monitor files with specified extensions (directories only) |
 | `permission_mode` | string | No | Claude CLI permission mode (default: default) |
 | `allowed_tools` | list | No | Allowed tools whitelist (optional) |
-| `exclude_patterns` | list | No | Exclude path patterns (optional) |
+| `exclude_patterns` | list | No | Exclude path patterns (directories only) |
 
 ### Permission Modes (permission_mode)
 
@@ -314,6 +318,23 @@ prompt: "File {events}: Review {file} for bugs and improvements"
 ```
 
 ## Usage Examples
+
+### Monitor a Single File
+
+Monitor specific configuration files or important documents:
+
+```yaml
+watches:
+  - path: /etc/nginx/nginx.conf
+    prompt: "Nginx config changed at {file}. Please validate the syntax and check for potential issues."
+    events: ["modified"]
+
+  - path: /home/user/important-document.md
+    prompt: "Document {file} was modified. Please review and summarize the changes."
+    events: ["modified"]
+```
+
+**Note:** When monitoring a single file, the `recursive` and `extensions` options are automatically ignored.
 
 ### Monitor Python Project
 
@@ -426,7 +447,8 @@ This ensures only the final state triggers Claude, reducing unnecessary API call
 
 ### Q: How to stop monitoring?
 
-Press `Ctrl+C` or send `SIGTERM` signal for graceful shutdown.
+- **If running as a service**: Use `systemctl --user stop ftrigger` or the corresponding service management command
+- **If running directly**: Press `Ctrl+C` or send `SIGTERM` signal for graceful shutdown
 
 ### Q: Not detecting file changes?
 
