@@ -15,11 +15,13 @@
 
 ## 功能特性
 
-- 🔍 监控指定目录的文件变化（创建、修改）
+- 🔍 监控指定目录的文件变化（创建、修改、删除、移动）
+- 🎯 **事件过滤** - 选择要监控的事件类型
+- ⏱️ **智能防抖** - 将快速变化合并为单次触发（1秒延迟）
 - 🤖 自动触发 Claude CLI 执行配置的提示词
 - ⚙️ 支持多个监控路径，每个路径独立配置
+- 📝 提示词支持变量替换（如 `{file}`、`{events}`）
 - 🎯 支持文件扩展名过滤
-- 📝 提示词支持变量替换（如 `{file}`）
 - 🚫 支持排除模式（如 `.git`、`node_modules`）
 - 🔄 跨平台支持（Linux、macOS、Windows）
 - 🛡️ 权限控制和工具白名单，增强安全性
@@ -238,6 +240,7 @@ systemctl --user start ftrigger@prod
 | `prompt` | string | 是 | 触发时执行的提示词 |
 | `recursive` | boolean | 否 | 是否递归监控子目录（默认：true） |
 | `extensions` | list | 否 | 只监控指定扩展名的文件（可选） |
+| `events` | list | 否 | 要监控的事件类型：["created", "modified", "deleted", "moved"]（默认：全部） |
 | `permission_mode` | string | 否 | Claude CLI 权限模式（默认：default） |
 | `allowed_tools` | list | 否 | 允许的工具白名单（可选） |
 | `exclude_patterns` | list | 否 | 排除路径模式（可选） |
@@ -296,11 +299,18 @@ exclude_patterns:
 
 - `{file}` - 变化的文件完整路径
 - `{path}` - 同 `{file}`
+- `{events}` - 触发操作的事件类型：`created`、`modified`、`deleted`、`moved`
+
+**`moved` 事件的专用变量：**
+- `{src_path}` / `{src}` - 源路径（文件从哪里移动）
+- `{dest_path}` / `{dest}` - 目标路径（文件移动到哪里）
 
 示例：
 
 ```yaml
 prompt: "Review the Python file {file} for bugs and improvements"
+# 或使用事件类型
+prompt: "文件 {events}：检查 {file} 的代码质量"
 ```
 
 ## 使用示例
@@ -363,16 +373,54 @@ watches:
       - "Write"
 ```
 
+### 事件过滤
+
+仅监控特定事件类型：
+
+```yaml
+watches:
+  # 仅监控新文件创建
+  - path: ./uploads
+    prompt: "新文件已创建：{file}。请处理并分析。"
+    events: ["created"]
+    recursive: true
+
+  # 监控创建和修改，忽略删除
+  - path: ./src
+    prompt: "文件 {events}：检查 {file} 的代码质量。"
+    events: ["created", "modified"]
+    extensions: [".py"]
+    permission_mode: bypassPermissions
+    allowed_tools:
+      - "Read"
+      - "LSP"
+```
+
+**支持的事件类型：**
+- `created` - 文件/目录创建
+- `modified` - 文件/目录修改
+- `deleted` - 文件/目录删除
+- `moved` - 文件/目录移动/重命名
+
+**注意：** 如果未指定 `events` 字段，默认监控所有事件类型。
+
 ## 工作原理
 
 1. 使用 `watchdog` 库监控文件系统事件
-2. 当检测到文件创建或修改时，根据配置过滤事件
-3. 构建并执行 `claude -p <prompt>` 命令
-4. 在独立线程中异步执行，不阻塞监控
+2. 根据配置的事件类型（created、modified、deleted、moved）过滤事件
+3. 应用防抖机制，将快速变化合并（1 秒延迟）
+4. 构建并执行带有提示词变量的 `claude` CLI 命令
+5. 在独立线程中异步执行，不阻塞监控
 
 ## 防抖机制
 
-为避免短时间内多次触发，同一文件在 5 秒内只会触发一次。
+为避免快速文件变化时多次触发（例如快速多次保存文件），ftrigger 使用智能防抖策略：
+
+- **1 秒延迟**：事件发生后，等待 1 秒再触发
+- **合并处理**：如果延迟窗口内再次发生事件，重置计时器
+- **按事件类型跟踪**：每个 文件:事件类型 组合都有独立的计时器
+
+这确保只有最终状态才会触发 Claude，减少不必要的 API 调用并提高效率。
 
 ## 常见问题
 

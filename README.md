@@ -15,11 +15,13 @@ File monitoring tool for Claude CLI - Automatically executes Claude CLI commands
 
 ## Features
 
-- 🔍 Monitor file changes in specified directories (creation, modification)
+- 🔍 Monitor file changes in specified directories (creation, modification, deletion, move)
+- 🎯 **Event filtering** - Select which event types to monitor
+- ⏱️ **Smart debouncing** - Coalesce rapid changes into single trigger (1s delay)
 - 🤖 Automatically trigger Claude CLI with configured prompts
 - ⚙️ Support multiple watch paths with independent configurations
+- 📝 Prompt variable substitution (e.g., `{file}`, `{events}`)
 - 🎯 File extension filtering support
-- 📝 Prompt variable substitution (e.g., `{file}`)
 - 🚫 Exclude patterns support (e.g., `.git`, `node_modules`)
 - 🔄 Cross-platform support (Linux, macOS, Windows)
 - 🛡️ Permission control and tool whitelisting for security
@@ -238,6 +240,7 @@ See `ftrigger.systemd.tutorial.md` for detailed documentation.
 | `prompt` | string | Yes | Prompt to execute when triggered |
 | `recursive` | boolean | No | Whether to monitor subdirectories recursively (default: true) |
 | `extensions` | list | No | Only monitor files with specified extensions (optional) |
+| `events` | list | No | Event types to monitor: ["created", "modified", "deleted", "moved"] (default: all) |
 | `permission_mode` | string | No | Claude CLI permission mode (default: default) |
 | `allowed_tools` | list | No | Allowed tools whitelist (optional) |
 | `exclude_patterns` | list | No | Exclude path patterns (optional) |
@@ -296,11 +299,18 @@ The following variables are supported in prompts:
 
 - `{file}` - Full path of the changed file
 - `{path}` - Same as `{file}`
+- `{events}` - Event type that triggered the action: `created`, `modified`, `deleted`, `moved`
+
+**Event-specific variables for `moved` events:**
+- `{src_path}` / `{src}` - Source path (where file was moved from)
+- `{dest_path}` / `{dest}` - Destination path (where file was moved to)
 
 Example:
 
 ```yaml
 prompt: "Review the Python file {file} for bugs and improvements"
+# Or with event type
+prompt: "File {events}: Review {file} for bugs and improvements"
 ```
 
 ## Usage Examples
@@ -363,16 +373,54 @@ watches:
       - "Write"
 ```
 
+### Event Filtering
+
+Monitor specific event types only:
+
+```yaml
+watches:
+  # Only monitor new file creation
+  - path: ./uploads
+    prompt: "New file created: {file}. Please process and analyze."
+    events: ["created"]
+    recursive: true
+
+  # Monitor creation and modification, ignore deletion
+  - path: ./src
+    prompt: "File {events}: Review {file} for code quality."
+    events: ["created", "modified"]
+    extensions: [".py"]
+    permission_mode: bypassPermissions
+    allowed_tools:
+      - "Read"
+      - "LSP"
+```
+
+**Supported event types:**
+- `created` - File/directory created
+- `modified` - File/directory modified
+- `deleted` - File/directory deleted
+- `moved` - File/directory moved/renamed
+
+**Note:** If `events` field is not specified, all event types are monitored by default.
+
 ## How It Works
 
 1. Uses the `watchdog` library to monitor file system events
-2. Filters events based on configuration when file creation or modification is detected
-3. Builds and executes `claude -p <prompt>` command
-4. Executes asynchronously in a separate thread without blocking monitoring
+2. Filters events based on configured event types (created, modified, deleted, moved)
+3. Applies debouncing to coalesce rapid changes (1-second delay)
+4. Builds and executes `claude` CLI command with prompt variables
+5. Executes asynchronously in a separate thread without blocking monitoring
 
 ## Debouncing
 
-To avoid multiple triggers in a short time, the same file will only trigger once within 5 seconds.
+To avoid multiple triggers during rapid file changes (e.g., saving a file multiple times quickly), ftrigger uses a smart debouncing strategy:
+
+- **1-second delay**: When an event occurs, wait 1 second before triggering
+- **Coalescing**: If another event occurs within the delay window, reset the timer
+- **Per-event-type tracking**: Each file:event_type combination has its own timer
+
+This ensures only the final state triggers Claude, reducing unnecessary API calls and improving efficiency.
 
 ## FAQ
 
