@@ -17,14 +17,78 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Fetch PR diff
+      - name: Fetch PR files and contents
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # Fetch PR files list
+          curl -s \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            "${{ github.event.pull_request.url }}/files" > pr_files.json
+
+          # Fetch diff for reference
           curl -s \
             -H "Authorization: Bearer $GH_TOKEN" \
             -H "Accept: application/vnd.github.v3.diff" \
             "${{ github.event.pull_request.url }}" > pr.diff
+
+          # Extract PR info
+          HEAD_SHA=$(jq -r '.[0].sha' pr_files.json)
+          REPO=${{ github.event.pull_request.head.repo.full_name }}
+
+          # Create directory for file contents
+          mkdir -p files_content
+
+          # Fetch complete file contents
+          python3 << 'PYEOF'
+          import json
+          import os
+          import urllib.request
+
+          with open("pr_files.json", "r") as f:
+              files = json.load(f)
+
+          repo = os.environ["REPO"]
+          head_sha = os.environ["HEAD_SHA"]
+
+          manifest = []
+          total_lines = 0
+
+          for file in files:
+              filename = file["filename"]
+              changes = file.get("changes", 0)
+
+              # Skip deleted files
+              if file.get("status") == "removed":
+                  continue
+
+              # Check if likely text file (has patch)
+              if not file.get("patch"):
+                  continue
+
+              # Fetch raw content
+              raw_url = f"https://raw.githubusercontent.com/{repo}/{head_sha}/{filename}"
+              try:
+                  with urllib.request.urlopen(raw_url, timeout=10) as response:
+                      content = response.read().decode('utf-8', errors='ignore')
+                      line_count = len(content.split('\n'))
+
+                      # Save content
+                      safe_name = filename.replace('/', '_')
+                      with open(f"files_content/{safe_name}", "w") as out:
+                          out.write(content)
+
+                      manifest.append(f"{filename}:{line_count}:{safe_name}")
+                      total_lines += line_count
+              except Exception as e:
+                  print(f"Failed to fetch {filename}: {e}")
+
+          with open("files_manifest.txt", "w") as f:
+              for m in manifest:
+                  f.write(m + "\n")
+
+          print(f"Fetched {len(manifest)} files, {total_lines} total lines")
+          PYEOF
 
       - name: Install anthropic
         run: pip3 install anthropic
@@ -45,21 +109,55 @@ jobs:
               print("No diff found, skipping review")
               exit(0)
 
+          # Load file manifest
+          manifest = []
+          files_content = {}
+          try:
+              with open("files_manifest.txt", "r") as f:
+                  for line in f:
+                      parts = line.strip().split(':')
+                      if len(parts) == 3:
+                          filename, line_count, safe_name = parts
+                          manifest.append((filename, int(line_count), safe_name))
+
+              # Load file contents
+              for filename, line_count, safe_name in manifest:
+                  try:
+                      with open(f"files_content/{safe_name}", "r") as f:
+                          files_content[filename] = f.read()
+                  except:
+                      pass
+          except:
+              pass
+
           client = anthropic.Anthropic(
               api_key=os.environ["ANTHROPIC_AUTH_TOKEN"],
               base_url=os.environ["ANTHROPIC_BASE_URL"],
           )
 
-          prompt = f"""You are an AI code reviewer like GitHub Copilot Review.
+          # Build file contents section
+          files_section = ""
+          for filename, line_count, _ in manifest[:20]:  # Limit to 20 files
+              if filename in files_content:
+                  files_section += f"\n### {filename} ({line_count} lines)\n"
+                  files_section += f"```\n{files_content[filename][:3000]}\n```\n"  # Limit each file
 
-          Review the following PR diff and provide feedback with these sections:
+          prompt = f"""You are an AI code reviewer.
+
+          **Repository:** {os.environ.get("GITHUB_REPOSITORY", "unknown")}
+          **Files changed:** {len(manifest)}
+
+          **Complete file contents (new version):**
+          {files_section if files_section else "(No file contents available)"}
+
+          **Diff for reference:**
+          {diff}
+
+          Review the above and provide feedback with these sections:
           - **Summary**: Brief overview of changes
           - **Potential Issues**: Any bugs, security issues, or concerns
           - **Suggestions**: Improvements or best practices
           - **LGTM**: Overall assessment (LGTM / Needs Changes)
-
-          PR diff:
-          {diff}
           """
 
           message = client.messages.create(
