@@ -21,6 +21,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # Fetch PR info
+          curl -s \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            "${{ github.event.pull_request.url }}" > pr_info.json
+
           # Fetch PR files list
           curl -s \
             -H "Authorization: Bearer $GH_TOKEN" \
@@ -33,8 +38,11 @@ jobs:
             "${{ github.event.pull_request.url }}" > pr.diff
 
           # Extract PR info
-          HEAD_SHA=$(jq -r '.[0].sha' pr_files.json)
-          REPO=${{ github.event.pull_request.head.repo.full_name }}
+          HEAD_SHA=$(jq -r '.head.sha' pr_info.json)
+          REPO=$(jq -r '.head.repo.full_name' pr_info.json)
+
+          # Export for Python script
+          export HEAD_SHA REPO
 
           # Create directory for file contents
           mkdir -p files_content
