@@ -45,9 +45,19 @@ class WatchConfig:
         # Normalize path
         self.path = os.path.abspath(self.path)
 
-        # Validate if directory
-        if not os.path.isdir(self.path):
-            raise ValueError(f"Watch path must be a directory: {self.path}")
+        # Determine if path is a directory or file
+        self._is_directory = os.path.isdir(self.path)
+
+        # Handle directory-specific options
+        if not self._is_directory:
+            # File mode: automatically ignore directory-related options
+            if self.recursive:
+                logger.warning(f"Path is a file ({self.path}), ignoring 'recursive' option")
+                self.recursive = False
+
+            if self.extensions:
+                logger.warning(f"Path is a file ({self.path}), ignoring 'extensions' filter")
+                self.extensions = None
 
         # Normalize extensions list (ensure starting with .)
         if self.extensions:
@@ -100,6 +110,7 @@ class WatchConfig:
             self.events = list(self.SUPPORTED_EVENTS)
 
         logger.info(f"Loaded watch config: path={self.path}, prompt='{self.prompt}', "
+                    f"type={'directory' if self._is_directory else 'file'}, "
                     f"recursive={self.recursive}, extensions={self.extensions}, "
                     f"permission_mode={self.permission_mode}, allowed_tools={self.allowed_tools}, "
                     f"exclude_patterns={self.exclude_patterns}, events={self.events}")
