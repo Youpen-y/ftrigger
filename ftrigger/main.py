@@ -116,7 +116,7 @@ def main():
     # Record instance info for activity tracking
     from .activity import get_tracker
     import os
-    tracker = get_tracker()
+    tracker = get_tracker()  # Auto-detects PID
     tracker.set_instance_info(os.getpid(), config.source_file)
 
     # Start watchers

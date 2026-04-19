@@ -184,20 +184,30 @@ class ActivityTracker:
             return result
 
 
-# Global tracker instance
-_tracker: Optional[ActivityTracker] = None
+# Global tracker instances (support multiple instances)
+_trackers: dict[str, ActivityTracker] = {}
 _tracker_lock = Lock()
 
 
-def get_tracker() -> ActivityTracker:
-    """Get or create global activity tracker instance
+def get_tracker(instance_id: Optional[str] = None) -> ActivityTracker:
+    """Get or create activity tracker instance
+
+    Args:
+        instance_id: Optional instance identifier (e.g., "pid12345").
+                     If None, automatically uses current process PID.
 
     Returns:
-        Global ActivityTracker instance
+        ActivityTracker instance
     """
-    global _tracker
+    global _trackers
 
     with _tracker_lock:
-        if _tracker is None:
-            _tracker = ActivityTracker()
-        return _tracker
+        # Auto-detect instance_id from current PID if not provided
+        if instance_id is None:
+            import os
+            instance_id = f"pid{os.getpid()}"
+
+        if instance_id not in _trackers:
+            _trackers[instance_id] = ActivityTracker(instance_id=instance_id)
+
+        return _trackers[instance_id]
