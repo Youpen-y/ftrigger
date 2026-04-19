@@ -166,12 +166,18 @@ def parse_systemd_service(output: str, service_name: str) -> Optional[InstanceIn
     )
 
 
-def get_standalone_processes() -> list[InstanceInfo]:
+def get_standalone_processes(exclude_pids: Optional[set[int]] = None) -> list[InstanceInfo]:
     """获取独立进程
+
+    Args:
+        exclude_pids: 要排除的 PID 集合（如 systemd 服务的 PID）
 
     Returns:
         实例信息列表
     """
+    if exclude_pids is None:
+        exclude_pids = set()
+
     instances = []
 
     try:
@@ -194,10 +200,18 @@ def get_standalone_processes() -> list[InstanceInfo]:
                 except (ValueError, IndexError):
                     continue
 
+                # 排除已知的 PID（systemd 服务等）
+                if pid in exclude_pids:
+                    continue
+
                 command = parts[10]
 
                 # 跳过 systemctl 调用
                 if "systemctl" in command:
+                    continue
+
+                # 跳过状态查询命令（ftrigger --status 或 ftrigger -s）
+                if "--status" in command or " -s" in command.replace("ftrigger", ""):
                     continue
 
                 # 获取进程启动时间
@@ -276,7 +290,9 @@ def get_all_instances() -> list[InstanceInfo]:
         实例信息列表
     """
     services = get_systemd_services()
-    standalones = get_standalone_processes()
+    # 收集 systemd 服务的 PID，避免在独立进程中重复检测
+    service_pids = {s.pid for s in services if s.pid > 0}
+    standalones = get_standalone_processes(exclude_pids=service_pids)
     return services + standalones
 
 
