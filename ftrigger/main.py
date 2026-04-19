@@ -46,8 +46,14 @@ def main():
     parser.add_argument(
         "-c",
         "--config",
-        default="config.yaml",
-        help="Configuration file path (default: config.yaml)",
+        default=None,
+        help="Configuration file path (default: auto-discover from project/user/system levels)",
+    )
+    parser.add_argument(
+        "-s",
+        "--status",
+        action="store_true",
+        help="Show status panel and exit",
     )
     parser.add_argument(
         "-v",
@@ -58,8 +64,9 @@ def main():
 
     args = parser.parse_args()
 
-    # Start with default log level to record configuration loading process
-    setup_logging("INFO")
+    # For status mode, suppress config loading logs
+    initial_log_level = "WARNING" if args.status else "INFO"
+    setup_logging(initial_log_level)
 
     # Load configuration
     try:
@@ -72,13 +79,19 @@ def main():
         logger.error(f"Configuration file error: {e}")
         sys.exit(1)
 
+    # Status mode: show configuration and exit
+    if args.status:
+        from .status import show_status
+        show_status(config)
+        return
+
     # Set final log level based on config file and command line arguments
     # Command line -v flag has highest priority
     log_level = "DEBUG" if args.verbose else config.log_level
     setup_logging(log_level)
 
     logger.info("File Trigger starting...")
-    logger.info(f"Successfully loaded configuration: {args.config}")
+    logger.info(f"Successfully loaded configuration")
     logger.info(f"Log level: {config.log_level}")
 
     # Start watchers
