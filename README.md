@@ -156,6 +156,7 @@ ftrigger supports two distinct modes with different configuration behavior:
 **Command-Line Mode:**
 - Uses `config.yaml` in current directory by default
 - Can specify any config file with `-c` option
+- Ignores standard service config locations unless explicitly specified via `-c`
 - Designed for temporary monitoring and testing
 
 **Service Mode:**
@@ -344,10 +345,12 @@ watches:
   - path: /etc/nginx/nginx.conf
     prompt: "Nginx config changed at {file}. Please validate the syntax and check for potential issues."
     events: ["modified"]
+    permission_mode: acceptEdits
 
   - path: /home/user/important-document.md
     prompt: "Document {file} was modified. Please review and summarize the changes."
     events: ["modified"]
+    permission_mode: acceptEdits
 ```
 
 **Note:** When monitoring a single file, the `recursive` and `extensions` options are automatically ignored.
@@ -359,6 +362,7 @@ watches:
   - path: ./src
     prompt: "Analyze {file} for code quality issues and suggest refactoring opportunities."
     recursive: true
+    permission_mode: acceptEdits
     extensions: [".py"]
 ```
 
@@ -369,6 +373,7 @@ watches:
   - path: ./docs
     prompt: "Check the documentation for clarity, consistency, and completeness."
     recursive: true
+    permission_mode: acceptEdits
     extensions: [".md", ".rst"]
 ```
 
@@ -378,10 +383,12 @@ watches:
 watches:
   - path: ./backend
     prompt: "Review backend code changes for security issues."
+    permission_mode: acceptEdits
     extensions: [".py"]
 
   - path: ./frontend
     prompt: "Review frontend code changes for accessibility and performance."
+    permission_mode: acceptEdits
     extensions: [".js", ".ts", ".jsx", ".tsx"]
 ```
 
@@ -421,6 +428,7 @@ watches:
     prompt: "New file created: {file}. Please process and analyze."
     events: ["created"]
     recursive: true
+    permission_mode: acceptEdits
 
   # Monitor creation and modification, ignore deletion
   - path: ./src
