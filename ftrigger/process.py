@@ -5,12 +5,19 @@ Detects running ftrigger instances including systemd services and standalone pro
 
 import re
 import subprocess
+import sys
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
 from logging import getLogger
+
+try:
+    import psutil
+    HAS_PSUTIL = True
+except ImportError:
+    HAS_PSUTIL = False
 
 logger = getLogger(__name__)
 
@@ -167,7 +174,7 @@ def parse_systemd_service(output: str, service_name: str) -> Optional[InstanceIn
 
 
 def get_standalone_processes(exclude_pids: Optional[set[int]] = None) -> list[InstanceInfo]:
-    """获取独立进程
+    """获取独立进程（跨平台）
 
     Args:
         exclude_pids: 要排除的 PID 集合（如 systemd 服务的 PID）
@@ -180,67 +187,43 @@ def get_standalone_processes(exclude_pids: Optional[set[int]] = None) -> list[In
 
     instances = []
 
-    try:
-        # 使用 ps 命令查找 ftrigger 进程
-        result = subprocess.run(
-            ["ps", "aux"],
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-
-        for line in result.stdout.split("\n"):
-            if "ftrigger" in line and "grep" not in line:
-                parts = line.split(None, 10)
-                if len(parts) < 11:
-                    continue
-
-                try:
-                    pid = int(parts[1])
-                except (ValueError, IndexError):
-                    continue
-
-                # 排除已知的 PID（systemd 服务等）
+    if HAS_PSUTIL:
+        # 使用 psutil（跨平台）
+        for proc in psutil.process_iter(['pid', 'cmdline', 'create_time']):
+            try:
+                pid = proc.info['pid']
                 if pid in exclude_pids:
                     continue
 
-                command = parts[10]
+                cmdline = proc.info['cmdline']
+                if not cmdline:
+                    continue
+
+                # 检查是否是 ftrigger 进程
+                cmdline_str = ' '.join(cmdline)
+                if 'ftrigger' not in cmdline_str:
+                    continue
 
                 # 跳过 systemctl 调用
-                if "systemctl" in command:
+                if 'systemctl' in cmdline_str:
                     continue
 
-                # 跳过状态查询命令（ftrigger --status 或 ftrigger -s）
-                if "--status" in command or " -s" in command.replace("ftrigger", ""):
+                # 跳过状态查询命令
+                if '--status' in cmdline_str or (' -s' in cmdline_str and 'ftrigger' in cmdline_str):
                     continue
-
-                # 获取进程启动时间
-                start_time = None
-                try:
-                    # 使用 ps 获取启动时间
-                    time_result = subprocess.run(
-                        ["ps", "-p", str(pid), "-o", "lstart="],
-                        capture_output=True,
-                        text=True,
-                        timeout=2,
-                    )
-                    if time_result.stdout.strip():
-                        start_time = datetime.strptime(time_result.stdout.strip(), "%a %b %d %H:%M:%S %Y")
-                except (ValueError, subprocess.TimeoutExpired):
-                    pass
 
                 # 从命令行提取配置文件
-                config_path = extract_config_from_command(command)
+                config_path = extract_config_from_command(cmdline_str)
                 if not config_path:
                     config_path = "unknown"
 
-                # 尝试从 /proc 读取命令行
-                if config_path == "unknown":
+                # 获取启动时间
+                start_time = None
+                create_time = proc.info.get('create_time')
+                if create_time:
                     try:
-                        with open(f"/proc/{pid}/cmdline", "r") as f:
-                            cmdline = f.read().replace("\x00", " ")
-                            config_path = extract_config_from_command(cmdline)
-                    except (FileNotFoundError, PermissionError):
+                        start_time = datetime.fromtimestamp(create_time)
+                    except (ValueError, OSError):
                         pass
 
                 instances.append(
@@ -254,8 +237,83 @@ def get_standalone_processes(exclude_pids: Optional[set[int]] = None) -> list[In
                     )
                 )
 
-    except (FileNotFoundError, subprocess.TimeoutExpired) as e:
-        logger.debug(f"Failed to query processes: {e}")
+            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                continue
+    else:
+        # 回退到 ps 命令（仅 Linux/Unix）
+        if sys.platform == "win32":
+            logger.debug("Process detection not supported on Windows without psutil")
+            return []
+
+        try:
+            result = subprocess.run(
+                ["ps", "aux"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+
+            for line in result.stdout.split("\n"):
+                if "ftrigger" in line and "grep" not in line:
+                    parts = line.split(None, 10)
+                    if len(parts) < 11:
+                        continue
+
+                    try:
+                        pid = int(parts[1])
+                    except (ValueError, IndexError):
+                        continue
+
+                    if pid in exclude_pids:
+                        continue
+
+                    command = parts[10]
+
+                    if "systemctl" in command:
+                        continue
+
+                    if "--status" in command or " -s" in command.replace("ftrigger", ""):
+                        continue
+
+                    start_time = None
+                    try:
+                        time_result = subprocess.run(
+                            ["ps", "-p", str(pid), "-o", "lstart="],
+                            capture_output=True,
+                            text=True,
+                            timeout=2,
+                        )
+                        if time_result.stdout.strip():
+                            start_time = datetime.strptime(time_result.stdout.strip(), "%a %b %d %H:%M:%S %Y")
+                    except (ValueError, subprocess.TimeoutExpired):
+                        pass
+
+                    config_path = extract_config_from_command(command)
+                    if not config_path:
+                        config_path = "unknown"
+
+                    # 尝试从 /proc 读取命令行
+                    if config_path == "unknown":
+                        try:
+                            with open(f"/proc/{pid}/cmdline", "r") as f:
+                                cmdline = f.read().replace("\x00", " ")
+                                config_path = extract_config_from_command(cmdline)
+                        except (FileNotFoundError, PermissionError):
+                            pass
+
+                    instances.append(
+                        InstanceInfo(
+                            pid=pid,
+                            type="standalone",
+                            name=f"pid{pid}",
+                            config_path=config_path,
+                            start_time=start_time,
+                            status="running",
+                        )
+                    )
+
+        except (FileNotFoundError, subprocess.TimeoutExpired) as e:
+            logger.debug(f"Failed to query processes: {e}")
 
     return instances
 
