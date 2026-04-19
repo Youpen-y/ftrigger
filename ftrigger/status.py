@@ -115,6 +115,6 @@ def show_status(config: Config) -> None:
     # Display hints
     print("\n" + "=" * 40)
     print("Hints:")
-    print("  Run monitoring mode: ftrigger")
-    print("  View logs: journalctl --user -u ftrigger -f")
-    print("  Stop service: systemctl --user stop ftrigger")
+    print("  Start monitoring: ftrigger")
+    print("  Specify config:    ftrigger -c /path/to/config.yaml")
+    print("  View this status:  ftrigger --status")
