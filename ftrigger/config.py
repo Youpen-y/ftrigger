@@ -163,7 +163,9 @@ class Config:
                 f"during config merge."
             )
 
-        watches = list(watches_by_path.values())
+        # Create copies to avoid shared mutable state
+        import copy
+        watches = [copy.copy(w) for w in watches_by_path.values()]
 
         return Config(log_level=log_level, watches=watches)
 
