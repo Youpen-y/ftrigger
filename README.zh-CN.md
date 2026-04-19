@@ -344,10 +344,12 @@ watches:
   - path: /etc/nginx/nginx.conf
     prompt: "Nginx 配置文件 {file} 已更改。请验证语法并检查潜在问题。"
     events: ["modified"]
+    permission_mode: acceptEdits
 
   - path: /home/user/重要文档.md
     prompt: "文档 {file} 已修改。请审查并总结更改内容。"
     events: ["modified"]
+    permission_mode: acceptEdits
 ```
 
 **注意：** 监控单个文件时，`recursive` 和 `extensions` 选项会自动被忽略。
@@ -359,6 +361,7 @@ watches:
   - path: ./src
     prompt: "Analyze {file} for code quality issues and suggest refactoring opportunities."
     recursive: true
+    permission_mode: acceptEdits
     extensions: [".py"]
 ```
 
@@ -369,6 +372,7 @@ watches:
   - path: ./docs
     prompt: "Check the documentation for clarity, consistency, and completeness."
     recursive: true
+    permission_mode: acceptEdits
     extensions: [".md", ".rst"]
 ```
 
@@ -378,10 +382,12 @@ watches:
 watches:
   - path: ./backend
     prompt: "Review backend code changes for security issues."
+    permission_mode: acceptEdits
     extensions: [".py"]
 
   - path: ./frontend
     prompt: "Review frontend code changes for accessibility and performance."
+    permission_mode: acceptEdits
     extensions: [".js", ".ts", ".jsx", ".tsx"]
 ```
 
@@ -421,6 +427,7 @@ watches:
     prompt: "新文件已创建：{file}。请处理并分析。"
     events: ["created"]
     recursive: true
+    permission_mode: acceptEdits
 
   # 监控创建和修改，忽略删除
   - path: ./src
