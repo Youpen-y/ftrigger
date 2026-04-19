@@ -48,9 +48,25 @@ def parse_systemd_timestamp(timestamp_str: str) -> Optional[datetime]:
         return None
 
     try:
-        # systemd timestamp format: "Mon 2025-01-19 12:15:30 UTC"
-        # or "2025-01-19 12:15:30"
-        return datetime.fromisoformat(timestamp_str.replace(" UTC", "").replace(" ", "T"))
+        # systemd timestamp format: "Mon 2025-01-19 12:15:30 UTC" or "Mon 2025-01-19 12:15:30 CST"
+        # or "2025-01-19 12:15:30" (without weekday prefix)
+
+        # Remove weekday prefix (e.g., "Mon ", "Tue ", etc.)
+        # Format is "DDD YYYY-MM-DD HH:MM:SS TZ" where DDD is 3-letter weekday
+        parts = timestamp_str.split()
+        if len(parts) >= 3 and len(parts[0]) == 3:
+            # Has weekday prefix, remove it
+            timestamp_str = ' '.join(parts[1:])
+
+        # Remove timezone suffix (UTC, CST, etc.) if present
+        parts = timestamp_str.rsplit(' ', 1)
+        if len(parts) == 2 and parts[1] in ('UTC', 'CST', 'GMT', 'EST', 'PST', 'MST'):
+            timestamp_str = parts[0]
+
+        # Replace remaining space with T for ISO format
+        timestamp_str = timestamp_str.replace(' ', 'T')
+
+        return datetime.fromisoformat(timestamp_str)
     except (ValueError, AttributeError):
         logger.debug(f"Failed to parse timestamp: {timestamp_str}")
         return None
