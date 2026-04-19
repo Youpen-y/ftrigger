@@ -454,7 +454,7 @@ watches:
 | Command | Description |
 |---------|-------------|
 | `ftrigger` | Start monitoring with `config.yaml` in current directory |
-| `ftrigger -c <path>` | Start monitoring with specified config file |
+| `ftrigger -c/--config <path>` | Start monitoring with specified config file |
 | `ftrigger --status` | Display configuration and statistics panel |
 | `ftrigger -v` | Show verbose logs (DEBUG level) |
 | `ftrigger -h, --help` | Show help message |

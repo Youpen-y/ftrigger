@@ -449,6 +449,16 @@ watches:
 
 **注意：** 如果未指定 `events` 字段，默认监控所有事件类型。
 
+## 命令
+
+| 命令 | 描述 |
+|------|------|
+| `ftrigger` | 使用当前目录的 `config.yaml` 启动监控 |
+| `ftrigger -c/--config <path>` | 使用指定的配置文件启动监控 |
+| `ftrigger --status` | 显示配置和统计面板 |
+| `ftrigger -v` | 显示详细日志（DEBUG 级别） |
+| `ftrigger -h, --help` | 显示帮助信息 |
+
 ## 工作原理
 
 1. 使用 `watchdog` 库监控文件系统事件
