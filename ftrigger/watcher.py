@@ -11,6 +11,7 @@ from pathlib import Path
 from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
 
+from .activity import get_tracker
 from .config import WatchConfig
 from .executor import execute_claude, Permissions
 
@@ -179,6 +180,14 @@ class WatchHandler(FileSystemEventHandler):
             )
 
             logger.info(f"Triggering Claude CLI: {prompt[:50]}...")
+
+            # Record activity
+            try:
+                tracker = get_tracker()
+                tracker.record(file_path, event_type, self.config.path)
+            except Exception as e:
+                logger.debug(f"Failed to record activity: {e}")
+
             execute_claude(prompt, file_path, permissions, self.config.allowed_tools)
 
         except Exception as e:

@@ -3,6 +3,7 @@
 Provides user-friendly status panel showing configuration and monitoring state.
 """
 
+from ftrigger.activity import get_tracker
 from ftrigger.config import Config
 
 
@@ -67,6 +68,49 @@ def show_status(config: Config) -> None:
         # Add separator between watches except for the last one
         if i < len(config.watches):
             print()
+
+    # Display today's statistics
+    try:
+        tracker = get_tracker()
+        stats = tracker.get_today_stats()
+
+        print(f"\nToday's Statistics:")
+        print(f"  Triggers:     {stats['triggers']}")
+        print(f"  Files:        {stats['files']}")
+
+        # Show event breakdown if there were any triggers
+        if stats['triggers'] > 0:
+            events = []
+            if stats['created']:
+                events.append(f"created: {stats['created']}")
+            if stats['modified']:
+                events.append(f"modified: {stats['modified']}")
+            if stats['deleted']:
+                events.append(f"deleted: {stats['deleted']}")
+            if stats['moved']:
+                events.append(f"moved: {stats['moved']}")
+
+            if events:
+                print(f"  Events:       {', '.join(events)}")
+
+    except Exception as e:
+        print(f"\nToday's Statistics: unavailable ({e})")
+
+    # Display recent activities
+    try:
+        tracker = get_tracker()
+        recent = tracker.get_recent_activities(limit=5)
+
+        if recent:
+            print(f"\nRecent Activity:")
+            for activity in recent:
+                print(f"  {activity['time']}  {activity['file_path']}  {activity['event_type']}")
+        else:
+            print(f"\nRecent Activity:")
+            print(f"  No activity recorded yet")
+
+    except Exception as e:
+        print(f"\nRecent Activity: unavailable ({e})")
 
     # Display hints
     print("\n" + "=" * 40)
