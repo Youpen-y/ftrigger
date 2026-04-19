@@ -27,7 +27,8 @@
 - 🚫 支持排除模式（如 `.git`、`node_modules`）
 - 🔄 跨平台支持（Linux、macOS、Windows）
 - 🛡️ 权限控制和工具白名单，增强安全性
-- 📚 **分层配置** - 系统级、用户级、项目级配置
+- 📊 **状态显示** - 使用 `--status` 查看配置和统计信息
+- 📈 **活动跟踪** - 记录触发历史和每日统计
 
 ## 应用场景
 
@@ -135,46 +136,62 @@ watches:
 ### 2. 启动监控
 
 ```bash
-# 自动发现并合并配置（项目 -> 用户 -> 系统）
+# 启动监控（使用当前目录的 config.yaml）
 ftrigger
 
-# 或显式指定配置文件
-ftrigger --config /path/to/config.yaml
+# 显式指定配置文件
+ftrigger -c /path/to/config.yaml
+
+# 显示状态面板
+ftrigger --status
 
 # 显示详细日志
 ftrigger -v
 ```
 
-### 配置层次
+### 配置模式
 
-ftrigger 支持分层配置，自动合并：
+ftrigger 支持两种不同的模式，配置行为不同：
 
-| 层级 | 路径 | 优先级 |
-|------|------|--------|
-| **系统级** | `/etc/ftrigger/config.yaml` | 低 |
-| **用户级** | `~/.config/ftrigger/config.yaml` | 中 |
-| **项目级** | `./config.yaml` 或 `--config` | 高 |
+**命令行模式**：
+- 默认使用当前目录的 `config.yaml`
+- 可以使用 `-c` 选项指定任意配置文件
+- 忽略标准服务配置位置，除非通过 `-c` 显式指定
+- 适用于临时监控和测试
 
-高优先级配置覆盖低优先级配置，所有层级的 `watches` 会合并。
+**服务模式**：
+- 根据服务类型使用固定的配置路径
+- **用户服务**：`~/.config/ftrigger/config.yaml`
+- **系统服务**：`/etc/ftrigger/config.yaml`
+- 适用于长期后台监控
+
+这种分离防止了服务和命令行实例之间的冲突。
 
 ## 作为服务运行
 
-对于长期运行的监控，可以将 ftrigger 安装为 systemd 用户服务。
+对于长期运行的监控，可以将 ftrigger 安装为 systemd 服务。
 
 ### 快速安装（Linux）
 
-使用自动化安装脚本：
+使用自动化安装脚本进行交互式模式选择：
 
 ```bash
-# 安装单实例服务（推荐）
+# 交互式安装（首次使用推荐）
 ./install-service.sh
 
-# 使用自定义配置安装
-./install-service.sh --config /path/to/config.yaml
+# 直接安装为用户服务
+./install-service.sh --mode user
+
+# 直接安装为系统服务
+./install-service.sh --mode system
 
 # 卸载服务
 ./install-service.sh --uninstall
 ```
+
+安装程序会提示您选择：
+- **[0] 用户服务** - 为当前用户安装（`~/.config/ftrigger/config.yaml`）
+- **[1] 系统服务** - 全局安装（`/etc/ftrigger/config.yaml`）
 
 ### 手动安装
 
@@ -328,10 +345,12 @@ watches:
   - path: /etc/nginx/nginx.conf
     prompt: "Nginx 配置文件 {file} 已更改。请验证语法并检查潜在问题。"
     events: ["modified"]
+    permission_mode: acceptEdits
 
   - path: /home/user/重要文档.md
     prompt: "文档 {file} 已修改。请审查并总结更改内容。"
     events: ["modified"]
+    permission_mode: acceptEdits
 ```
 
 **注意：** 监控单个文件时，`recursive` 和 `extensions` 选项会自动被忽略。
@@ -343,6 +362,7 @@ watches:
   - path: ./src
     prompt: "Analyze {file} for code quality issues and suggest refactoring opportunities."
     recursive: true
+    permission_mode: acceptEdits
     extensions: [".py"]
 ```
 
@@ -353,6 +373,7 @@ watches:
   - path: ./docs
     prompt: "Check the documentation for clarity, consistency, and completeness."
     recursive: true
+    permission_mode: acceptEdits
     extensions: [".md", ".rst"]
 ```
 
@@ -362,10 +383,12 @@ watches:
 watches:
   - path: ./backend
     prompt: "Review backend code changes for security issues."
+    permission_mode: acceptEdits
     extensions: [".py"]
 
   - path: ./frontend
     prompt: "Review frontend code changes for accessibility and performance."
+    permission_mode: acceptEdits
     extensions: [".js", ".ts", ".jsx", ".tsx"]
 ```
 
@@ -405,6 +428,7 @@ watches:
     prompt: "新文件已创建：{file}。请处理并分析。"
     events: ["created"]
     recursive: true
+    permission_mode: acceptEdits
 
   # 监控创建和修改，忽略删除
   - path: ./src
@@ -425,13 +449,24 @@ watches:
 
 **注意：** 如果未指定 `events` 字段，默认监控所有事件类型。
 
+## 命令
+
+| 命令 | 描述 |
+|------|------|
+| `ftrigger` | 使用当前目录的 `config.yaml` 启动监控 |
+| `ftrigger -c/--config <path>` | 使用指定的配置文件启动监控 |
+| `ftrigger --status` | 显示配置和统计面板 |
+| `ftrigger -v` | 显示详细日志（DEBUG 级别） |
+| `ftrigger -h, --help` | 显示帮助信息 |
+
 ## 工作原理
 
 1. 使用 `watchdog` 库监控文件系统事件
 2. 根据配置的事件类型（created、modified、deleted、moved）过滤事件
 3. 应用防抖机制，将快速变化合并（1 秒延迟）
-4. 构建并执行带有提示词变量的 `claude` CLI 命令
-5. 在独立线程中异步执行，不阻塞监控
+4. 构建并执行带有提示词变量的 `claude` 命令
+5. 记录活动统计用于跟踪
+6. 在独立线程中异步执行，不阻塞监控
 
 ## 防抖机制
 
@@ -476,9 +511,12 @@ ftrigger/
 │   ├── main.py          # 主入口
 │   ├── config.py        # 配置管理
 │   ├── watcher.py       # 文件监控
-│   └── executor.py      # CLI 执行器
+│   ├── executor.py      # CLI 执行器
+│   ├── status.py        # 状态显示
+│   └── activity.py      # 活动跟踪
 ├── config.yaml          # 配置文件
 ├── requirements.txt     # Python 依赖
+├── install-service.sh   # 服务安装脚本
 └── README.md            # 本文档
 ```
 

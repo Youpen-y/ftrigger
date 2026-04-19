@@ -27,7 +27,8 @@ File monitoring tool for Claude CLI - Automatically executes Claude CLI commands
 - 🚫 Exclude patterns support (e.g., `.git`, `node_modules`)
 - 🔄 Cross-platform support (Linux, macOS, Windows)
 - 🛡️ Permission control and tool whitelisting for security
-- 📚 **Hierarchical configuration** - System, user, and project level configs
+- 📊 **Status display** - View configuration and statistics with `--status`
+- 📈 **Activity tracking** - Track trigger history and daily statistics
 
 ## Use Cases
 
@@ -135,46 +136,62 @@ watches:
 ### 2. Start Monitoring
 
 ```bash
-# Auto-discover and merge configs (project -> user -> system)
+# Start monitoring (uses config.yaml in current directory)
 ftrigger
 
-# Or specify config file explicitly
-ftrigger --config /path/to/config.yaml
+# Specify config file explicitly
+ftrigger -c /path/to/config.yaml
+
+# Show status panel
+ftrigger --status
 
 # Show verbose logs
 ftrigger -v
 ```
 
-### Configuration Hierarchy
+### Configuration Mode
 
-ftrigger supports hierarchical configuration with automatic merging:
+ftrigger supports two distinct modes with different configuration behavior:
 
-| Level | Path | Priority |
-|-------|------|----------|
-| **System** | `/etc/ftrigger/config.yaml` | Low |
-| **User** | `~/.config/ftrigger/config.yaml` | Medium |
-| **Project** | `./config.yaml` or `--config` | High |
+**Command-Line Mode:**
+- Uses `config.yaml` in current directory by default
+- Can specify any config file with `-c` option
+- Ignores standard service config locations unless explicitly specified via `-c`
+- Designed for temporary monitoring and testing
 
-Higher priority configs override lower priority ones, while `watches` from all levels are merged.
+**Service Mode:**
+- Uses fixed configuration paths based on service type
+- **User service**: `~/.config/ftrigger/config.yaml`
+- **System service**: `/etc/ftrigger/config.yaml`
+- Designed for long-running background monitoring
+
+This separation prevents conflicts between service and command-line instances.
 
 ## Run as a Service
 
-For long-running monitoring, install ftrigger as a systemd user service.
+For long-running monitoring, install ftrigger as a systemd service.
 
 ### Quick Install (Linux)
 
-Use the automated installation script:
+Use the automated installation script with interactive mode selection:
 
 ```bash
-# Install single instance service (recommended)
+# Install with interactive prompt (recommended for first-time)
 ./install-service.sh
 
-# Install with custom config
-./install-service.sh --config /path/to/config.yaml
+# Install as user service directly
+./install-service.sh --mode user
+
+# Install as system service directly
+./install-service.sh --mode system
 
 # Uninstall service
 ./install-service.sh --uninstall
 ```
+
+The installer will prompt you to select:
+- **[0] User service** - Install for current user (`~/.config/ftrigger/config.yaml`)
+- **[1] System service** - Install system-wide (`/etc/ftrigger/config.yaml`)
 
 ### Manual Installation
 
@@ -242,7 +259,7 @@ See [`ftrigger.systemd.tutorial.md`](./ftrigger.systemd.tutorial.md) for detaile
 |-------|------|----------|-------------|
 | `path` | string | Yes | File or directory path to monitor (must exist) |
 | `prompt` | string | Yes | Prompt to execute when triggered |
-| `events` | list | Yes | Event types to monitor: ["created", "modified", "deleted", "moved"] |
+| `events` | list | No | Event types to monitor: ["created", "modified", "deleted", "moved"] |
 | `recursive` | boolean | No | Whether to monitor subdirectories recursively (default: true, directories only) |
 | `extensions` | list | No | Only monitor files with specified extensions (directories only) |
 | `permission_mode` | string | No | Claude CLI permission mode (default: default) |
@@ -328,10 +345,12 @@ watches:
   - path: /etc/nginx/nginx.conf
     prompt: "Nginx config changed at {file}. Please validate the syntax and check for potential issues."
     events: ["modified"]
+    permission_mode: acceptEdits
 
   - path: /home/user/important-document.md
     prompt: "Document {file} was modified. Please review and summarize the changes."
     events: ["modified"]
+    permission_mode: acceptEdits
 ```
 
 **Note:** When monitoring a single file, the `recursive` and `extensions` options are automatically ignored.
@@ -343,6 +362,7 @@ watches:
   - path: ./src
     prompt: "Analyze {file} for code quality issues and suggest refactoring opportunities."
     recursive: true
+    permission_mode: acceptEdits
     extensions: [".py"]
 ```
 
@@ -353,6 +373,7 @@ watches:
   - path: ./docs
     prompt: "Check the documentation for clarity, consistency, and completeness."
     recursive: true
+    permission_mode: acceptEdits
     extensions: [".md", ".rst"]
 ```
 
@@ -362,10 +383,12 @@ watches:
 watches:
   - path: ./backend
     prompt: "Review backend code changes for security issues."
+    permission_mode: acceptEdits
     extensions: [".py"]
 
   - path: ./frontend
     prompt: "Review frontend code changes for accessibility and performance."
+    permission_mode: acceptEdits
     extensions: [".js", ".ts", ".jsx", ".tsx"]
 ```
 
@@ -405,6 +428,7 @@ watches:
     prompt: "New file created: {file}. Please process and analyze."
     events: ["created"]
     recursive: true
+    permission_mode: acceptEdits
 
   # Monitor creation and modification, ignore deletion
   - path: ./src
@@ -425,13 +449,24 @@ watches:
 
 **Note:** If `events` field is not specified, all event types are monitored by default.
 
+## Commands
+
+| Command | Description |
+|---------|-------------|
+| `ftrigger` | Start monitoring with `config.yaml` in current directory |
+| `ftrigger -c/--config <path>` | Start monitoring with specified config file |
+| `ftrigger --status` | Display configuration and statistics panel |
+| `ftrigger -v` | Show verbose logs (DEBUG level) |
+| `ftrigger -h, --help` | Show help message |
+
 ## How It Works
 
 1. Uses the `watchdog` library to monitor file system events
 2. Filters events based on configured event types (created, modified, deleted, moved)
 3. Applies debouncing to coalesce rapid changes (1-second delay)
 4. Builds and executes `claude` CLI command with prompt variables
-5. Executes asynchronously in a separate thread without blocking monitoring
+5. Records activity statistics for tracking
+6. Executes asynchronously in a separate thread without blocking monitoring
 
 ## Debouncing
 
@@ -476,9 +511,12 @@ ftrigger/
 │   ├── main.py          # Main entry point
 │   ├── config.py        # Configuration management
 │   ├── watcher.py       # File monitoring
-│   └── executor.py      # CLI executor
+│   ├── executor.py      # CLI executor
+│   ├── status.py        # Status display
+│   └── activity.py      # Activity tracking
 ├── config.yaml          # Configuration file
 ├── requirements.txt     # Python dependencies
+├── install-service.sh   # Service installation script
 └── README.md            # This document
 ```
 
