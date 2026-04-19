@@ -46,8 +46,8 @@ def main():
     parser.add_argument(
         "-c",
         "--config",
-        default=None,
-        help="Configuration file path (default: auto-discover from project/user/system levels)",
+        default="config.yaml",
+        help="Configuration file path (default: config.yaml in current directory)",
     )
     parser.add_argument(
         "-s",
@@ -73,10 +73,23 @@ def main():
         config = load_config(args.config)
 
     except FileNotFoundError as e:
-        logger.error(f"Configuration file not found: {e}")
+        print(f"Configuration file not found: {args.config}", file=sys.stderr)
+        print("", file=sys.stderr)
+        print("Please create a configuration file or specify a different path:", file=sys.stderr)
+        print(f"  1. Create {args.config} in the current directory", file=sys.stderr)
+        print(f"  2. Use -c to specify a config file: ftrigger -c /path/to/config.yaml", file=sys.stderr)
+        print("", file=sys.stderr)
+        print("Example configuration:", file=sys.stderr)
+        print("  log_level: INFO", file=sys.stderr)
+        print("  watches:", file=sys.stderr)
+        print("    - path: /path/to/your/project", file=sys.stderr)
+        print("      prompt: \"Review {file} for improvements.\"", file=sys.stderr)
+        print("      recursive: true", file=sys.stderr)
+        print("      extensions: [\".py\", \".js\"]", file=sys.stderr)
+        print("      events: [\"created\", \"modified\"]", file=sys.stderr)
         sys.exit(1)
     except ValueError as e:
-        logger.error(f"Configuration file error: {e}")
+        print(f"Configuration file error: {e}", file=sys.stderr)
         sys.exit(1)
 
     # Status mode: show configuration and exit
@@ -90,28 +103,27 @@ def main():
     log_level = "DEBUG" if args.verbose else config.log_level
     setup_logging(log_level)
 
-    logger.info("File Trigger starting...")
-    logger.info(f"Successfully loaded configuration")
-    logger.info(f"Log level: {config.log_level}")
+    print("File Trigger starting...")
+    print(f"Configuration: {config.log_level} log level, {len(config.watches)} watch(es)")
 
     # Start watchers
     try:
         observers, handlers = start_watchers(config.watches)
-        logger.info(f"Started {len(observers)} watcher(s)")
+        print(f"Started {len(observers)} watcher(s)")
 
         # Setup signal handling for graceful shutdown
         running = True
 
         def signal_handler(signum, frame):
             nonlocal running
-            logger.info(f"Received signal {signum}, shutting down...")
+            print(f"\nReceived signal {signum}, shutting down...")
             running = False
 
         signal.signal(signal.SIGINT, signal_handler)
         signal.signal(signal.SIGTERM, signal_handler)
 
         # Main loop
-        logger.info("Monitoring running, press Ctrl+C to stop")
+        print("Monitoring running, press Ctrl+C to stop")
         while running:
             try:
                 import time
@@ -121,7 +133,7 @@ def main():
                 break
 
         # Stop all watchers and clean up resources
-        logger.info("Stopping watchers...")
+        print("Stopping watchers...")
 
         # Stop observers first to prevent new events from entering
         for observer in observers:
@@ -135,10 +147,10 @@ def main():
         for observer in observers:
             observer.join(timeout=5)  # 5 second timeout per observer
 
-        logger.info("File Trigger stopped")
+        print("File Trigger stopped")
 
     except Exception as e:
-        logger.exception(f"Runtime error: {e}")
+        print(f"Runtime error: {e}", file=sys.stderr)
         sys.exit(1)
 
 

@@ -29,6 +29,8 @@ NC='\033[0m' # No Color
 CONFIG_PATH=""
 MULTI_INSTANCE=false
 UNINSTALL=false
+SERVICE_MODE=""  # "user" or "system"
+SELECTED_MODE=""  # Global to store selected mode
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
@@ -45,21 +47,32 @@ while [[ $# -gt 0 ]]; do
             UNINSTALL=true
             shift
             ;;
+        --mode)
+            SERVICE_MODE="$2"
+            shift 2
+            ;;
         --help|-h)
             cat << EOF
 Usage: $0 [OPTIONS]
 
 Options:
-  --config PATH     Custom config file path
+  --config PATH     Custom config file path (for user mode: ~/.config/ftrigger/config.yaml)
   --multi-instance  Install template service for multiple instances
+  --mode MODE        Service mode: "user" or "system" (default: interactive prompt)
   --uninstall       Remove installed service
   --help, -h        Show this help message
 
 Examples:
-  # Install single instance service with default config
+  # Install single instance service (interactive mode selection)
   $0
 
-  # Install with custom config
+  # Install as user service
+  $0 --mode user
+
+  # Install as system service
+  $0 --mode system
+
+  # Install with custom config (user mode only)
   $0 --config /path/to/custom.yaml
 
   # Install multi-instance template
@@ -125,10 +138,14 @@ find_ftrigger_executable() {
     echo "$exec_path"
 }
 
-# Get default config path
+# Get default config path based on service mode
 get_default_config_path() {
+    local mode="$1"  # "user" or "system"
+
     if [ -n "$CONFIG_PATH" ]; then
         echo "$CONFIG_PATH"
+    elif [ "$mode" = "system" ]; then
+        echo "/etc/ftrigger/config.yaml"
     else
         echo "$HOME/.config/ftrigger/config.yaml"
     fi
@@ -149,10 +166,11 @@ log_level: INFO
 
 watches:
   - path: /path/to/your/project
+    events: ["created", "modified"]
     prompt: "Review the changed file {file} and suggest improvements."
     recursive: true
+    permission_mode: acceptEdits
     extensions: [".py", ".js", ".ts", ".yaml", ".md"]
-    events: ["created", "modified"]
 EOF
         log_success "Created example config: $config_path"
         log_warning "Please edit the config file before starting the service"
@@ -161,35 +179,44 @@ EOF
 
 # Uninstall service
 uninstall_service() {
-    local service_dir="$HOME/.config/systemd/user"
-    local service_name="ftrigger"
+    local mode="$1"  # "user" or "system"
 
-    log_info "Uninstalling ftrigger service..."
-
-    # Stop and disable if running
-    if systemctl --user is-active --quiet "${service_name}.service" 2>/dev/null; then
-        log_info "Stopping service..."
-        systemctl --user stop "${service_name}.service" || true
+    if [ "$mode" = "system" ]; then
+        local service_dir="/etc/systemd/system"
+        local systemctl_cmd="systemctl"
+    else
+        local service_dir="$HOME/.config/systemd/user"
+        local systemctl_cmd="systemctl --user"
     fi
 
-    if systemctl --user is-enabled --quiet "${service_name}.service" 2>/dev/null; then
+    local service_name="ftrigger"
+
+    log_info "Uninstalling ftrigger service (${mode} mode)..."
+
+    # Stop and disable if running
+    if $systemctl_cmd is-active --quiet "${service_name}.service" 2>/dev/null; then
+        log_info "Stopping service..."
+        $systemctl_cmd stop "${service_name}.service" || true
+    fi
+
+    if $systemctl_cmd is-enabled --quiet "${service_name}.service" 2>/dev/null; then
         log_info "Disabling service..."
-        systemctl --user disable "${service_name}.service" || true
+        $systemctl_cmd disable "${service_name}.service" || true
     fi
 
     # Remove service files
     if [ -f "${service_dir}/${service_name}.service" ]; then
-        rm -f "${service_dir}/${service_name}.service"
+        sudo rm -f "${service_dir}/${service_name}.service"
         log_success "Removed ${service_dir}/${service_name}.service"
     fi
 
     if [ -f "${service_dir}/${service_name}@.service" ]; then
-        rm -f "${service_dir}/${service_name}@.service"
+        sudo rm -f "${service_dir}/${service_name}@.service"
         log_success "Removed ${service_dir}/${service_name}@.service"
     fi
 
     # Reload systemd
-    systemctl --user daemon-reload
+    $systemctl_cmd daemon-reload
     log_success "Uninstall complete"
 }
 
@@ -197,22 +224,30 @@ uninstall_service() {
 install_single_instance() {
     local ftrigger_exec="$1"
     local config_path="$2"
-    local service_dir="$HOME/.config/systemd/user"
+    local mode="$3"  # "user" or "system"
 
-    log_info "Installing single instance service..."
+    if [ "$mode" = "system" ]; then
+        local service_dir="/etc/systemd/system"
+        local systemctl_cmd="systemctl"
+    else
+        local service_dir="$HOME/.config/systemd/user"
+        local systemctl_cmd="systemctl --user"
+    fi
+
+    log_info "Installing single instance service (${mode} mode)..."
 
     # Create service directory
-    mkdir -p "$service_dir"
-
-    # Get current username
-    local user_name="${USER:-$(whoami)}"
+    if [ "$mode" = "system" ]; then
+        sudo mkdir -p "$service_dir"
+    else
+        mkdir -p "$service_dir"
+    fi
 
     # Get absolute path of config
     config_path="$(realpath "$config_path" 2>/dev/null || echo "$config_path")"
 
     # Generate service file
-    cat > "${service_dir}/ftrigger.service" << EOF
-[Unit]
+    local service_content="[Unit]
 Description=File Trigger - Monitor file changes and trigger Claude CLI
 After=network-online.target
 Wants=network-online.target
@@ -234,7 +269,13 @@ SyslogIdentifier=ftrigger
 
 [Install]
 WantedBy=default.target
-EOF
+"
+
+    if [ "$mode" = "system" ]; then
+        echo "$service_content" | sudo tee "${service_dir}/ftrigger.service" > /dev/null
+    else
+        echo "$service_content" > "${service_dir}/ftrigger.service"
+    fi
 
     log_success "Created ${service_dir}/ftrigger.service"
 }
@@ -288,9 +329,10 @@ EOF
 log_level: INFO
 watches:
   - path: /path/to/python/project
-    prompt: "Review {file}"
-    extensions: [".py"]
     events: ["created", "modified"]
+    prompt: "Review {file}"
+    permission_mode: acceptEdits
+    extensions: [".py"]
 EOF
 
     cat > "$HOME/.config/ftrigger/project2.yaml" << EOF
@@ -298,9 +340,10 @@ EOF
 log_level: DEBUG
 watches:
   - path: /path/to/javascript/project
-    prompt: "Analyze {file}"
-    extensions: [".js", ".ts"]
     events: ["created", "modified"]
+    prompt: "Analyze {file}"
+    permission_mode: acceptEdits
+    extensions: [".js", ".ts"]
 EOF
 
     log_success "Created example configs:"
@@ -311,23 +354,64 @@ EOF
 # Enable and start service
 enable_and_start() {
     local service_name="$1"
+    local mode="$2"  # "user" or "system"
+
+    if [ "$mode" = "system" ]; then
+        local systemctl_cmd="systemctl"
+    else
+        local systemctl_cmd="systemctl --user"
+    fi
 
     log_info "Reloading systemd daemon..."
-    systemctl --user daemon-reload
+    $systemctl_cmd daemon-reload
 
     log_info "Enabling service..."
-    systemctl --user enable "${service_name}"
+    $systemctl_cmd enable "${service_name}"
 
     log_info "Starting service..."
-    systemctl --user start "${service_name}"
+    $systemctl_cmd start "${service_name}"
 
     log_success "Service installed and started!"
     echo ""
     echo "Management commands:"
-    echo "  systemctl --user status ${service_name}"
-    echo "  systemctl --user restart ${service_name}"
-    echo "  systemctl --user stop ${service_name}"
-    echo "  journalctl --user -u ${service_name} -f"
+    echo "  $systemctl_cmd status ${service_name}"
+    echo "  $systemctl_cmd restart ${service_name}"
+    echo "  $systemctl_cmd stop ${service_name}"
+    if [ "$mode" = "system" ]; then
+        echo "  journalctl -u ${service_name} -f"
+    else
+        echo "  journalctl --user -u ${service_name} -f"
+    fi
+}
+
+# Prompt for service mode
+prompt_service_mode() {
+    if [ -n "$SERVICE_MODE" ]; then
+        SELECTED_MODE="$SERVICE_MODE"
+        return
+    fi
+
+    echo ""
+    log_info "Select installation mode:"
+    echo "  [0] User service  - Install for current user (~/.config/ftrigger/config.yaml)"
+    echo "  [1] System service- Install system-wide (/etc/ftrigger/config.yaml)"
+    echo ""
+    read -p "Enter choice [0/1]: " choice
+
+    case $choice in
+        0|"user"|"u")
+            SELECTED_MODE="user"
+            log_success "Selected: User service"
+            ;;
+        1|"system"|"s")
+            SELECTED_MODE="system"
+            log_success "Selected: System service"
+            ;;
+        *)
+            log_error "Invalid choice: $choice (enter 0 or 1)"
+            exit 1
+            ;;
+    esac
 }
 
 # Main execution
@@ -340,7 +424,8 @@ main() {
 
     # Handle uninstall
     if [ "$UNINSTALL" = true ]; then
-        uninstall_service
+        prompt_service_mode
+        uninstall_service "$SELECTED_MODE"
         exit 0
     fi
 
@@ -348,13 +433,18 @@ main() {
     local ftrigger_exec
     ftrigger_exec=$(find_ftrigger_executable)
 
-    # Get config path
+    # Determine service mode (uses global SELECTED_MODE)
+    prompt_service_mode
+    local mode="$SELECTED_MODE"
+
+    # Get config path based on mode
     local config_path
-    config_path=$(get_default_config_path)
+    config_path=$(get_default_config_path "$mode")
 
     echo ""
     log_info "Configuration:"
     echo "  ftrigger: ${ftrigger_exec}"
+    echo "  mode:     ${mode}"
     echo "  config:   ${config_path}"
     echo ""
 
@@ -367,11 +457,16 @@ main() {
 
         echo ""
         log_info "To start instances, use:"
-        echo "  systemctl --user start ftrigger@project1"
-        echo "  systemctl --user start ftrigger@project2"
+        if [ "$mode" = "system" ]; then
+            echo "  systemctl start ftrigger@project1"
+            echo "  systemctl start ftrigger@project2"
+        else
+            echo "  systemctl --user start ftrigger@project1"
+            echo "  systemctl --user start ftrigger@project2"
+        fi
     else
-        install_single_instance "$ftrigger_exec" "$config_path"
-        enable_and_start "ftrigger"
+        install_single_instance "$ftrigger_exec" "$config_path" "$mode"
+        enable_and_start "ftrigger" "$mode"
     fi
 
     echo ""
