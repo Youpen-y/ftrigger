@@ -28,7 +28,7 @@ class InstanceInfo:
 
     pid: int
     type: str  # "service" | "standalone"
-    name: str  # 服务名或进程标识
+    name: str  # Service name or process identifier
     config_path: str
     start_time: Optional[datetime]
     status: str  # "running" | "stopped" | "unknown"
@@ -36,35 +36,53 @@ class InstanceInfo:
 
 
 def parse_systemd_timestamp(timestamp_str: str) -> Optional[datetime]:
-    """解析 systemd 时间戳格式
+    """Parse systemd timestamp format.
 
     Args:
-        timestamp_str: systemd 时间戳字符串
+        timestamp_str: systemd timestamp string
 
     Returns:
-        datetime 对象或 None
+        datetime object or None
     """
     if not timestamp_str or timestamp_str == "n/a":
         return None
 
     try:
-        # systemd 时间戳格式: "Mon 2025-01-19 12:15:30 UTC"
-        # 或 "2025-01-19 12:15:30"
+        # systemd timestamp format: "Mon 2025-01-19 12:15:30 UTC"
+        # or "2025-01-19 12:15:30"
         return datetime.fromisoformat(timestamp_str.replace(" UTC", "").replace(" ", "T"))
     except (ValueError, AttributeError):
         logger.debug(f"Failed to parse timestamp: {timestamp_str}")
         return None
 
 
-def get_systemd_services() -> list[InstanceInfo]:
-    """获取 systemd 服务状态
+def _infer_config_path(service_name: str) -> str:
+    """Infer config path from service name as fallback.
+
+    Args:
+        service_name: Service name (e.g., "ftrigger@dev.service")
 
     Returns:
-        实例信息列表
+        Inferred config path
+    """
+    if "@" in service_name:
+        # Template service: ftrigger@dev -> ~/.config/ftrigger/dev.yaml
+        instance_name = service_name.split("@")[1].replace(".service", "")
+        return str(Path.home() / ".config" / "ftrigger" / f"{instance_name}.yaml")
+    else:
+        # Single instance service: ~/.config/ftrigger/config.yaml
+        return str(Path.home() / ".config" / "ftrigger" / "config.yaml")
+
+
+def get_systemd_services() -> list[InstanceInfo]:
+    """Get systemd service status.
+
+    Returns:
+        List of InstanceInfo objects
     """
     instances = []
 
-    # 用户服务
+    # User service
     try:
         result = subprocess.run(
             ["systemctl", "--user", "show", "ftrigger.service"],
@@ -78,7 +96,7 @@ def get_systemd_services() -> list[InstanceInfo]:
     except (FileNotFoundError, subprocess.TimeoutExpired) as e:
         logger.debug(f"Failed to query user service: {e}")
 
-    # 多实例服务
+    # Multi-instance services
     try:
         result = subprocess.run(
             ["systemctl", "--user", "list-units", "--type=service", "--all", "--plain"],
@@ -89,7 +107,7 @@ def get_systemd_services() -> list[InstanceInfo]:
 
         for line in result.stdout.split("\n"):
             if "ftrigger@" in line:
-                # 解析服务名
+                # Parse service name
                 parts = line.split()
                 if parts:
                     service_name = parts[0].replace(".service", "")
@@ -113,14 +131,14 @@ def get_systemd_services() -> list[InstanceInfo]:
 
 
 def parse_systemd_service(output: str, service_name: str) -> Optional[InstanceInfo]:
-    """解析 systemctl show 输出
+    """Parse systemctl show output to extract instance information.
 
     Args:
-        output: systemctl show 命令输出
-        service_name: 服务名称
+        output: systemctl show command output
+        service_name: Service name
 
     Returns:
-        InstanceInfo 或 None
+        InstanceInfo or None
     """
     properties = {}
     for line in output.split("\n"):
@@ -128,19 +146,19 @@ def parse_systemd_service(output: str, service_name: str) -> Optional[InstanceIn
             key, value = line.split("=", 1)
             properties[key] = value
 
-    # 检查服务是否加载
+    # Check if service is loaded
     load_state = properties.get("LoadState", "")
     if load_state == "not-found" or load_state == "masked":
         return None
 
-    # 获取 PID
+    # Get PID
     main_pid = properties.get("MainPID", "0")
     try:
         pid = int(main_pid)
     except ValueError:
         pid = 0
 
-    # 检查是否在运行
+    # Check if running
     active_state = properties.get("ActiveState", "unknown")
     if active_state == "active" and pid > 0:
         status = "running"
@@ -149,19 +167,27 @@ def parse_systemd_service(output: str, service_name: str) -> Optional[InstanceIn
     else:
         status = "unknown"
 
-    # 获取启动时间
+    # Get start time
     start_time = parse_systemd_timestamp(properties.get("ExecMainStartTimestamp", ""))
     if not start_time:
         start_time = parse_systemd_timestamp(properties.get("ActiveEnterTimestamp", ""))
 
-    # 推断配置文件路径
-    if "@" in service_name:
-        # 模板服务: ftrigger@dev -> ~/.config/ftrigger/dev.yaml
-        instance_name = service_name.split("@")[1].replace(".service", "")
-        config_path = str(Path.home() / ".config" / "ftrigger" / f"{instance_name}.yaml")
+    # Extract config path from ExecStart command line
+    config_path = properties.get("ExecStart", "")
+    if config_path:
+        # Remove quotes if present
+        config_path = config_path.strip('"\'')
+
+        # Extract -c or --config argument
+        match = re.search(r'(?:--config[=\s]+|-[c][=\s]+)([^\s]+)', config_path)
+        if match:
+            config_path = match.group(1)
+        else:
+            # Fallback to inference
+            config_path = _infer_config_path(service_name)
     else:
-        # 单实例服务: ~/.config/ftrigger/config.yaml
-        config_path = str(Path.home() / ".config" / "ftrigger" / "config.yaml")
+        # Fallback to inference
+        config_path = _infer_config_path(service_name)
 
     return InstanceInfo(
         pid=pid,
@@ -174,13 +200,13 @@ def parse_systemd_service(output: str, service_name: str) -> Optional[InstanceIn
 
 
 def get_standalone_processes(exclude_pids: Optional[set[int]] = None) -> list[InstanceInfo]:
-    """获取独立进程（跨平台）
+    """Get standalone processes (cross-platform).
 
     Args:
-        exclude_pids: 要排除的 PID 集合（如 systemd 服务的 PID）
+        exclude_pids: PIDs to exclude (e.g., systemd service PIDs)
 
     Returns:
-        实例信息列表
+        List of instance information
     """
     if exclude_pids is None:
         exclude_pids = set()
@@ -188,7 +214,7 @@ def get_standalone_processes(exclude_pids: Optional[set[int]] = None) -> list[In
     instances = []
 
     if HAS_PSUTIL:
-        # 使用 psutil（跨平台）
+        # Use psutil (cross-platform)
         for proc in psutil.process_iter(['pid', 'cmdline', 'create_time']):
             try:
                 pid = proc.info['pid']
@@ -199,25 +225,25 @@ def get_standalone_processes(exclude_pids: Optional[set[int]] = None) -> list[In
                 if not cmdline:
                     continue
 
-                # 检查是否是 ftrigger 进程
+                # Check if this is an ftrigger process
                 cmdline_str = ' '.join(cmdline)
                 if 'ftrigger' not in cmdline_str:
                     continue
 
-                # 跳过 systemctl 调用
+                # Skip systemctl invocations
                 if 'systemctl' in cmdline_str:
                     continue
 
-                # 跳过状态查询命令
+                # Skip status query commands
                 if '--status' in cmdline_str or (' -s' in cmdline_str and 'ftrigger' in cmdline_str):
                     continue
 
-                # 从命令行提取配置文件
+                # Extract config path from command line
                 config_path = extract_config_from_command(cmdline_str)
                 if not config_path:
                     config_path = "unknown"
 
-                # 获取启动时间
+                # Get start time
                 start_time = None
                 create_time = proc.info.get('create_time')
                 if create_time:
@@ -240,7 +266,7 @@ def get_standalone_processes(exclude_pids: Optional[set[int]] = None) -> list[In
             except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
                 continue
     else:
-        # 回退到 ps 命令（仅 Linux/Unix）
+        # Fallback to ps command (Linux/Unix only)
         if sys.platform == "win32":
             logger.debug("Process detection not supported on Windows without psutil")
             return []
@@ -292,7 +318,7 @@ def get_standalone_processes(exclude_pids: Optional[set[int]] = None) -> list[In
                     if not config_path:
                         config_path = "unknown"
 
-                    # 尝试从 /proc 读取命令行
+                    # Try reading from /proc
                     if config_path == "unknown":
                         try:
                             with open(f"/proc/{pid}/cmdline", "r") as f:
@@ -319,21 +345,21 @@ def get_standalone_processes(exclude_pids: Optional[set[int]] = None) -> list[In
 
 
 def extract_config_from_command(command: str) -> str:
-    """从命令行提取配置文件路径
+    """Extract config file path from command line.
 
     Args:
-        command: 命令行字符串
+        command: Command line string
 
     Returns:
-        配置文件路径，未找到返回 "unknown"
+        Config file path, or "unknown" if not found
     """
-    # 匹配 --config 或 -c 参数
+    # Match --config or -c argument
     match = re.search(r"--config[=\s]+([^\s]+)|-c[=\s]+([^\s]+)", command)
     if match:
         config = match.group(1) or match.group(2)
         return config
 
-    # 匹配直接传递的 YAML 文件
+    # Match directly passed YAML file
     match = re.search(r"([\w/~/\.\-]+\.yaml)", command)
     if match:
         return match.group(1)
@@ -342,26 +368,26 @@ def extract_config_from_command(command: str) -> str:
 
 
 def get_all_instances() -> list[InstanceInfo]:
-    """获取所有运行中的实例
+    """Get all running instances.
 
     Returns:
-        实例信息列表
+        List of instance information
     """
     services = get_systemd_services()
-    # 收集 systemd 服务的 PID，避免在独立进程中重复检测
+    # Collect systemd service PIDs to avoid duplicate detection in standalone processes
     service_pids = {s.pid for s in services if s.pid > 0}
     standalones = get_standalone_processes(exclude_pids=service_pids)
     return services + standalones
 
 
 def get_instance_by_pid(pid: int) -> Optional[InstanceInfo]:
-    """根据 PID 获取实例信息
+    """Get instance info by PID.
 
     Args:
-        pid: 进程 ID
+        pid: Process ID
 
     Returns:
-        InstanceInfo 或 None
+        InstanceInfo or None
     """
     instances = get_all_instances()
     for inst in instances:
@@ -371,20 +397,20 @@ def get_instance_by_pid(pid: int) -> Optional[InstanceInfo]:
 
 
 def get_instance_by_name(name: str) -> Optional[InstanceInfo]:
-    """根据名称获取实例信息（支持服务名）
+    """Get instance info by name (supports service names).
 
     Args:
-        name: 服务名称或 "pid<数字>"
+        name: Service name or "pid<number>"
 
     Returns:
-        InstanceInfo 或 None
+        InstanceInfo or None
     """
     instances = get_all_instances()
     for inst in instances:
         if inst.name == name or inst.name == name + ".service":
             return inst
 
-    # 尝试解析为 "pid123" 格式
+    # Try parsing as "pid123" format
     if name.startswith("pid"):
         try:
             pid = int(name[3:])
@@ -398,13 +424,13 @@ def get_instance_by_name(name: str) -> Optional[InstanceInfo]:
 
 
 def format_duration(start_time: datetime) -> str:
-    """格式化时间持续
+    """Format duration into a human-readable string.
 
     Args:
-        start_time: 开始时间
+        start_time: Start time
 
     Returns:
-        格式化的持续时间字符串
+        Formatted duration string
     """
     if not start_time:
         return "unknown"
@@ -432,14 +458,14 @@ def format_duration(start_time: datetime) -> str:
 
 
 def shorten_path(path: str, max_len: int = 35) -> str:
-    """缩短路径显示
+    """Shorten path for display purposes.
 
     Args:
-        path: 文件路径
-        max_len: 最大长度
+        path: File path
+        max_len: Maximum length
 
     Returns:
-        缩短后的路径
+        Shortened path
     """
     if not path or path == "unknown":
         return path
@@ -447,13 +473,13 @@ def shorten_path(path: str, max_len: int = 35) -> str:
     if len(path) <= max_len:
         return path
 
-    # 替换 home 目录为 ~
+    # Replace home directory with ~
     home = str(Path.home())
     if path.startswith(home):
         path = "~" + path[len(home):]
 
     if len(path) > max_len:
-        # 保留开头和结尾
+        # Keep beginning and end
         return path[:20] + "..." + path[-12:]
 
     return path

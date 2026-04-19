@@ -201,13 +201,21 @@ def get_tracker(instance_id: Optional[str] = None) -> ActivityTracker:
     """
     global _trackers
 
+    # Auto-detect instance_id from current PID if not provided
+    if instance_id is None:
+        import os
+        instance_id = f"pid{os.getpid()}"
+
+    # Check if already exists (fast path without creating instance)
     with _tracker_lock:
-        # Auto-detect instance_id from current PID if not provided
-        if instance_id is None:
-            import os
-            instance_id = f"pid{os.getpid()}"
+        if instance_id in _trackers:
+            return _trackers[instance_id]
 
+    # Create outside lock to avoid blocking other threads during I/O
+    new_tracker = ActivityTracker(instance_id=instance_id)
+
+    # Double-check and assign under lock
+    with _tracker_lock:
         if instance_id not in _trackers:
-            _trackers[instance_id] = ActivityTracker(instance_id=instance_id)
-
+            _trackers[instance_id] = new_tracker
         return _trackers[instance_id]
