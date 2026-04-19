@@ -56,6 +56,11 @@ def main():
         help="Show status panel and exit",
     )
     parser.add_argument(
+        "--pid",
+        metavar="<pid|name>",
+        help="Show detailed status for specified PID or service name (use with --status)",
+    )
+    parser.add_argument(
         "-v",
         "--verbose",
         action="store_true",
@@ -68,7 +73,15 @@ def main():
     initial_log_level = "WARNING" if args.status else "INFO"
     setup_logging(initial_log_level)
 
-    # Load configuration
+    # Status mode: show status panel and exit
+    if args.status:
+        from .status import show_status_with_args
+
+        # show_status_with_args handles pid argument internally
+        show_status_with_args(args.pid)
+        return
+
+    # Load configuration for monitoring mode
     try:
         config = load_config(args.config)
 
@@ -92,12 +105,6 @@ def main():
         print(f"Configuration file error: {e}", file=sys.stderr)
         sys.exit(1)
 
-    # Status mode: show configuration and exit
-    if args.status:
-        from .status import show_status
-        show_status(config)
-        return
-
     # Set final log level based on config file and command line arguments
     # Command line -v flag has highest priority
     log_level = "DEBUG" if args.verbose else config.log_level
@@ -105,6 +112,12 @@ def main():
 
     print("File Trigger starting...")
     print(f"Configuration: {config.log_level} log level, {len(config.watches)} watch(es)")
+
+    # Record instance info for activity tracking
+    from .activity import get_tracker
+    import os
+    tracker = get_tracker()
+    tracker.set_instance_info(os.getpid(), config.source_file)
 
     # Start watchers
     try:

@@ -18,11 +18,13 @@ logger = getLogger(__name__)
 class ActivityTracker:
     """Track trigger activities with persistent storage"""
 
-    def __init__(self, storage_path: Optional[Path] = None):
+    def __init__(self, instance_id: Optional[str] = None, storage_path: Optional[Path] = None):
         """Initialize activity tracker
 
         Args:
+            instance_id: Instance identifier for per-instance tracking (e.g., "pid12345")
             storage_path: Path to store activity data. Defaults to ~/.config/ftrigger/activity.json
+                          If instance_id is provided, uses activity.{instance_id}.json
         """
         self._lock = Lock()
 
@@ -33,7 +35,11 @@ class ActivityTracker:
             else:
                 config_dir = Path(os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config")))
 
-            storage_path = config_dir / "ftrigger" / "activity.json"
+            # Use instance-specific file if instance_id is provided
+            if instance_id:
+                storage_path = config_dir / "ftrigger" / f"activity.{instance_id}.json"
+            else:
+                storage_path = config_dir / "ftrigger" / "activity.json"
 
         self.storage_path = Path(storage_path)
         self.storage_path.parent.mkdir(parents=True, exist_ok=True)
@@ -59,6 +65,28 @@ class ActivityTracker:
         except Exception as e:
             logger.warning(f"Failed to load activity data: {e}")
             return {"activities": []}
+
+    def set_instance_info(self, pid: int, config_path: str) -> None:
+        """Set instance metadata
+
+        Args:
+            pid: Process ID
+            config_path: Configuration file path
+        """
+        with self._lock:
+            self._data["instance"] = {
+                "pid": pid,
+                "config": config_path,
+            }
+            self._save()
+
+    def get_instance_info(self) -> Optional[dict]:
+        """Get instance metadata
+
+        Returns:
+            Instance info dict or None
+        """
+        return self._data.get("instance")
 
     def _save(self) -> None:
         """Save activity data to storage"""
