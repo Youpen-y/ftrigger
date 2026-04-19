@@ -118,6 +118,7 @@ class Config:
 
     log_level: str = "INFO"
     watches: list[WatchConfig] = field(default_factory=list)
+    source_file: str = "unknown"  # Path to the configuration file
 
     @classmethod
     def from_dict(cls, data: dict) -> "Config":
@@ -208,6 +209,8 @@ def load_config(config_path: Optional[str] = None) -> Config:
     # Parse and validate configuration
     try:
         config = Config.from_dict(data)
+        # Set source file path for status display
+        config.source_file = str(path.absolute())
         logger.debug(f"Loaded configuration from {config_path}: log_level={config.log_level}, watches={len(config.watches)}")
         return config
     except ValueError as e:

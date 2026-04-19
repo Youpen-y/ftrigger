@@ -18,7 +18,7 @@ def show_status(config: Config) -> None:
     print("=" * 40)
 
     # Basic information
-    source_file = getattr(config, "_source_file", "unknown")
+    source_file = config.source_file
     log_level = config.log_level
 
     print(f"Mode:          Status Query")
