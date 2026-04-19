@@ -138,8 +138,32 @@ class Config:
         # Override log_level if specified in higher priority config
         log_level = other.log_level if other.log_level != "INFO" else self.log_level
 
-        # Combine watches from both configs
-        watches = self.watches + other.watches
+        # Combine watches with deduplication
+        # Higher priority (other) overrides lower priority (self) for same path
+        watches_by_path = {}
+
+        # Add lower priority watches first
+        for watch in self.watches:
+            watches_by_path[watch.path] = watch
+
+        # Override with higher priority watches
+        duplicate_count = 0
+        for watch in other.watches:
+            if watch.path in watches_by_path:
+                duplicate_count += 1
+                logger.debug(
+                    f"Duplicate watch path '{watch.path}' found. "
+                    f"Using higher priority config."
+                )
+            watches_by_path[watch.path] = watch
+
+        if duplicate_count > 0:
+            logger.info(
+                f"Removed {duplicate_count} duplicate watch path(s) "
+                f"during config merge."
+            )
+
+        watches = list(watches_by_path.values())
 
         return Config(log_level=log_level, watches=watches)
 
