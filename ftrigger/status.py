@@ -109,6 +109,12 @@ def show_status_detail(instance: InstanceInfo) -> None:
             icon = "📁" if is_directory else "📄"
             print(f"  {i}. {icon} {watch.path}")
 
+            # Display prompt (truncated if too long)
+            prompt = watch.prompt
+            if len(prompt) > 60:
+                prompt = prompt[:57] + "..."
+            print(f"     Prompt:  {prompt}")
+
             # Display events
             if watch.events:
                 events_str = ", ".join(watch.events)
