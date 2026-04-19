@@ -18,11 +18,13 @@ logger = getLogger(__name__)
 class ActivityTracker:
     """Track trigger activities with persistent storage"""
 
-    def __init__(self, storage_path: Optional[Path] = None):
+    def __init__(self, instance_id: Optional[str] = None, storage_path: Optional[Path] = None):
         """Initialize activity tracker
 
         Args:
+            instance_id: Instance identifier for per-instance tracking (e.g., "pid12345")
             storage_path: Path to store activity data. Defaults to ~/.config/ftrigger/activity.json
+                          If instance_id is provided, uses activity.{instance_id}.json
         """
         self._lock = Lock()
 
@@ -33,7 +35,11 @@ class ActivityTracker:
             else:
                 config_dir = Path(os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config")))
 
-            storage_path = config_dir / "ftrigger" / "activity.json"
+            # Use instance-specific file if instance_id is provided
+            if instance_id:
+                storage_path = config_dir / "ftrigger" / f"activity.{instance_id}.json"
+            else:
+                storage_path = config_dir / "ftrigger" / "activity.json"
 
         self.storage_path = Path(storage_path)
         self.storage_path.parent.mkdir(parents=True, exist_ok=True)
@@ -59,6 +65,28 @@ class ActivityTracker:
         except Exception as e:
             logger.warning(f"Failed to load activity data: {e}")
             return {"activities": []}
+
+    def set_instance_info(self, pid: int, config_path: str) -> None:
+        """Set instance metadata
+
+        Args:
+            pid: Process ID
+            config_path: Configuration file path
+        """
+        with self._lock:
+            self._data["instance"] = {
+                "pid": pid,
+                "config": config_path,
+            }
+            self._save()
+
+    def get_instance_info(self) -> Optional[dict]:
+        """Get instance metadata
+
+        Returns:
+            Instance info dict or None
+        """
+        return self._data.get("instance")
 
     def _save(self) -> None:
         """Save activity data to storage"""
@@ -156,20 +184,38 @@ class ActivityTracker:
             return result
 
 
-# Global tracker instance
-_tracker: Optional[ActivityTracker] = None
+# Global tracker instances (support multiple instances)
+_trackers: dict[str, ActivityTracker] = {}
 _tracker_lock = Lock()
 
 
-def get_tracker() -> ActivityTracker:
-    """Get or create global activity tracker instance
+def get_tracker(instance_id: Optional[str] = None) -> ActivityTracker:
+    """Get or create activity tracker instance
+
+    Args:
+        instance_id: Optional instance identifier (e.g., "pid12345").
+                     If None, automatically uses current process PID.
 
     Returns:
-        Global ActivityTracker instance
+        ActivityTracker instance
     """
-    global _tracker
+    global _trackers
 
+    # Auto-detect instance_id from current PID if not provided
+    if instance_id is None:
+        import os
+        instance_id = f"pid{os.getpid()}"
+
+    # Check if already exists (fast path without creating instance)
     with _tracker_lock:
-        if _tracker is None:
-            _tracker = ActivityTracker()
-        return _tracker
+        if instance_id in _trackers:
+            return _trackers[instance_id]
+
+    # Create outside lock to avoid blocking other threads during I/O
+    new_tracker = ActivityTracker(instance_id=instance_id)
+
+    # Double-check and assign under lock
+    with _tracker_lock:
+        if instance_id not in _trackers:
+            _trackers[instance_id] = new_tracker
+        return _trackers[instance_id]
