@@ -6,6 +6,7 @@ Loads and validates YAML configuration files with hierarchical support:
 - Project level: ./config.yaml or specified via --config
 """
 
+import copy
 import os
 import platform
 from dataclasses import dataclass, field
@@ -163,9 +164,8 @@ class Config:
                 f"during config merge."
             )
 
-        # Create copies to avoid shared mutable state
-        import copy
-        watches = [copy.copy(w) for w in watches_by_path.values()]
+        # Create deep copies to avoid shared mutable state
+        watches = [copy.deepcopy(w) for w in watches_by_path.values()]
 
         return Config(log_level=log_level, watches=watches)
 
