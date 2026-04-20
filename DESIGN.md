@@ -6,48 +6,7 @@
 
 当前实现对所有文件变化事件（created, modified）使用统一的处理方式。问题是：是否需要针对不同事件类型提供不同的配置？
 
-### 场景分析
-
-#### 支持细分的理由 ✅
-
-1. **不同操作需要不同响应**
-   - **新增文件**：检查结构、命名规范、是否需要文档、模板是否合适
-   - **修改文件**：审查改动、检查是否引入问题、代码质量
-   - **删除文件**：更新引用、清理资源、检查依赖
-
-2. **更精细的控制场景**
-   - 只监控新增，忽略修改（如新文件模板检查）
-   - 只监控修改，忽略新增（如代码审查）
-   - 不同操作需要完全不同的提示词
-
-3. **更好的自动化**
-   - 新增文件时自动创建配套文件
-   - 修改文件时自动运行测试
-   - 删除文件时自动更新文档
-
-#### 不需要细分的理由 ❌
-
-1. **复杂度大幅增加**
-   - 配置文件层级变深
-   - 用户理解成本提高
-   - 维护成本增加
-
-2. **实际需求有限**
-   - 大多数场景下，对文件变化的处理是相似的
-   - "文件有变化 → 分析它" 覆盖了 80% 的需求
-
-3. **技术现实**
-   - 编辑器保存文件时，往往同时触发 `created` 和 `modified` 事件
-   - 事件顺序和数量因编辑器而异，难以精确区分
-   - 临时文件、备份文件可能产生额外事件
-
-4. **现有方案已够用**
-   - 可以在提示词中让 Claude 自己判断发生了什么
-   - 简单的统一处理覆盖大多数场景
-
 ### 当前决策
-
-**已实现事件过滤（方案 C）** ✅
 
 采用**事件过滤器**方案，在配置中添加 `events` 字段：
 
@@ -185,7 +144,7 @@ python -m ftrigger --config config.yaml
 
 ### 解决方案
 
-#### 方案 A：用户自己后台化（当前方案）
+#### 用户自己后台化（当前方案）
 
 ```bash
 # 使用 nohup
@@ -200,23 +159,7 @@ systemctl --user start ftrigger
 
 **评价**：简单但不友好，需要用户自己处理。
 
-#### 方案 B：内置 daemon 模式
-
-```bash
-# 添加 --daemon 选项
-python -m ftrigger --daemon --config config.yaml
-
-# 添加 PID 文件管理
-python -m ftrigger --daemon --pid-file /var/run/ftrigger.pid
-
-# 添加状态管理
-python -m ftrigger --status
-python -m ftrigger --stop
-```
-
-**评价**：更友好，但增加了代码复杂度。
-
-#### 方案 C：systemd 集成（生产环境）⭐ 推荐
+#### systemd 集成（生产环境）⭐ 推荐
 
 提供预配置的 systemd service 文件：
 
@@ -259,7 +202,7 @@ systemctl --user start ftrigger@project2
 
 ### 当前决策（MVP）
 
-**优先方案 C（systemd 集成）**，原因：
+**优先方案 （systemd 集成）**，原因：
 
 1. ✅ **开箱即用** - 提供预配置的 service 文件
 2. ✅ **生产级质量** - 自动重启、日志轮转、资源限制
@@ -267,7 +210,7 @@ systemctl --user start ftrigger@project2
 4. ✅ **Linux 标准** - 符合系统管理最佳实践
 5. ✅ **多实例支持** - 使用模板可运行多个配置
 
-同时保留方案 A（用户自选）作为备选，满足不同用户需求。
+同时保留方案 （用户自选）作为备选，满足不同用户需求。
 
 ### 推荐使用方式
 
@@ -619,169 +562,6 @@ v0.4.0 (插件系统)
 - `ftrigger/executor.py` - 当前 Claude 执行器实现
 - `ftrigger/executors/` - 未来多执行器目录（待创建）
 - `ftrigger/config.py` - 配置加载逻辑
-
-### 决策日期
-
-2026-04-15
-
----
-
-## 三层配置系统设计
-
-### 背景
-
-当前只支持单一配置文件，用户需要在每个项目中复制配置。问题是：如何支持系统级、用户级和项目级的配置层次？
-
-### 设计目标
-
-1. **配置复用** - 用户级和系统级配置可被多个项目共享
-2. **优先级清晰** - 项目配置覆盖用户配置，用户配置覆盖系统配置
-3. **向后兼容** - 保持现有单一配置文件的使用方式
-4. **简单直观** - 自动查找配置，无需复杂设置
-
-### 配置层次
-
-| 层级 | 配置路径 | 用途 | 优先级 |
-|------|----------|------|--------|
-| **系统级** | `/etc/ftrigger/config.yaml` | 全局默认配置 | 低 |
-| **用户级** | `~/.config/ftrigger/config.yaml` | 用户个人默认 | 中 |
-| **项目级** | `./config.yaml` 或 `--config` | 项目特定配置 | 高 |
-
-### 合并规则
-
-```
-系统级 + 用户级 + 项目级 = 最终配置
-```
-
-- **log_level**：高优先级覆盖低优先级
-- **watches**：所有层的 watches 合并
-
-### 配置查找顺序
-
-```python
-# 1. 命令行指定（跳过自动查找）
-ftrigger --config /path/to/custom.yaml
-
-# 2. 自动查找（按优先级）
-ftrigger  # 查找：项目 -> 用户 -> 系统
-```
-
-### 实现细节
-
-#### Config.merge() 方法
-
-```python
-@dataclass
-class Config:
-    log_level: str = "INFO"
-    watches: list[WatchConfig] = field(default_factory=list)
-
-    def merge(self, other: "Config") -> "Config":
-        """合并高优先级配置到当前配置"""
-        log_level = other.log_level if other.log_level != "INFO" else self.log_level
-        watches = self.watches + other.watches
-        return Config(log_level=log_level, watches=watches)
-```
-
-#### 查找逻辑
-
-```python
-def load_config(config_path: Optional[str] = None) -> Config:
-    if config_path:
-        # 显式指定：只加载该文件
-        return load_single_config(config_path)
-
-    # 自动查找：按优先级加载并合并
-    configs = []
-    if system_config_exists():
-        configs.append(load_system_config())
-    if user_config_exists():
-        configs.append(load_user_config())
-    if project_config_exists():
-        configs.append(load_project_config())
-
-    return merge_configs(configs)
-```
-
-### 使用示例
-
-#### 示例 1：系统级默认配置
-
-```yaml
-# /etc/ftrigger/config.yaml
-log_level: INFO
-
-watches:
-  - path: /tmp
-    prompt: "Generic review"
-    extensions: [".py", ".js"]
-```
-
-#### 示例 2：用户级个人配置
-
-```yaml
-# ~/.config/ftrigger/config.yaml
-log_level: DEBUG  # 覆盖系统级
-
-watches:
-  - path: ~/projects
-    prompt: "My project review"
-    extensions: [".py"]
-```
-
-#### 示例 3：项目级特定配置
-
-```yaml
-# ./config.yaml
-# 继承 log_level = DEBUG（来自用户级）
-
-watches:
-  - path: ./src
-    prompt: "This project specific review"
-    extensions: [".py", ".ts"]
-    permission_mode: bypassPermissions
-```
-
-#### 最终合并结果
-
-```yaml
-log_level: DEBUG  # 来自用户级
-
-watches:
-  - path: /tmp           # 系统级
-    prompt: "Generic review"
-    extensions: [".py", ".js"]
-
-  - path: ~/projects     # 用户级
-    prompt: "My project review"
-    extensions: [".py"]
-
-  - path: ./src          # 项目级
-    prompt: "This project specific review"
-    extensions: [".py", ".ts"]
-    permission_mode: bypassPermissions
-```
-
-### 向后兼容
-
-```python
-# 旧方式：仍然有效
-ftrigger --config my-config.yaml
-
-# 新方式：自动查找
-ftrigger  # 自动查找并合并配置
-```
-
-### 当前状态
-
-✅ **已实现** - v0.1.0
-
-### 相关文件
-
-- `ftrigger/config.py` - 配置加载和合并逻辑
-- `/etc/ftrigger/config.yaml` - 系统级配置（需手动创建）
-- `~/.config/ftrigger/config.yaml` - 用户级配置（需手动创建）
-- `./config.yaml` - 项目级配置
 
 ### 决策日期
 

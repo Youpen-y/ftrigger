@@ -4,7 +4,6 @@ Monitors file system changes and triggers Claude CLI tool
 """
 
 import argparse
-import logging
 import signal
 import sys
 
