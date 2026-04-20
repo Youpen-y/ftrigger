@@ -231,20 +231,28 @@ def get_standalone_processes(exclude_pids: Optional[set[int]] = None) -> list[In
 
     if HAS_PSUTIL:
         # Use psutil (cross-platform)
-        for proc in psutil.process_iter(['pid', 'cmdline', 'create_time']):
+        for proc in psutil.process_iter(['pid', 'name', 'exe', 'cmdline', 'create_time', 'cwd']):
             try:
                 pid = proc.info['pid']
                 if pid in exclude_pids:
                     continue
 
-                cmdline = proc.info['cmdline']
+                # Get process info once
+                proc_name = proc.info.get('name', '')
+                proc_exe = proc.info.get('exe', '')
+                cmdline = proc.info.get('cmdline', [])
+                proc_cwd = proc.info.get('cwd', '')
+
+                # Check if this is an ftrigger process using helper function
+                # This avoids false positives from editors opening ftrigger project files
+                # and other programs with "ftrigger" in their name
+                if not _is_ftrigger_process(proc_name, proc_exe, cmdline):
+                    continue
+
                 if not cmdline:
                     continue
 
-                # Check if this is an ftrigger process
                 cmdline_str = ' '.join(cmdline)
-                if 'ftrigger' not in cmdline_str:
-                    continue
 
                 # Skip systemctl invocations
                 if 'systemctl' in cmdline_str:
@@ -256,6 +264,14 @@ def get_standalone_processes(exclude_pids: Optional[set[int]] = None) -> list[In
 
                 # Extract config path from command line
                 config_path = extract_config_from_command(cmdline_str)
+
+                # If no config specified in command line, try to infer from working directory
+                if (not config_path or config_path == "unknown") and proc_cwd:
+                    # Check if config.yaml exists in the working directory
+                    default_config = Path(proc_cwd) / 'config.yaml'
+                    if default_config.exists():
+                        config_path = str(default_config)
+
                 if not config_path:
                     config_path = "unknown"
 
@@ -297,6 +313,14 @@ def get_standalone_processes(exclude_pids: Optional[set[int]] = None) -> list[In
 
             for line in result.stdout.split("\n"):
                 if "ftrigger" in line and "grep" not in line:
+                    # More precise matching to avoid false positives:
+                    # - python -m ftrigger (module execution)
+                    # - /path/to/ftrigger (direct executable)
+                    # - ftrigger <subcommand|option> (any argument)
+                    # Skip: another-ftrigger, /path/to/another-ftrigger, grep ftrigger, etc.
+                    if not re.search(r'(?:python\s+)?-m\s+ftrigger|/ftrigger(?:\s|$)|(?:^|\s)ftrigger(?:\s+\S|$)', line):
+                        continue
+
                     parts = line.split(None, 10)
                     if len(parts) < 11:
                         continue
@@ -331,17 +355,33 @@ def get_standalone_processes(exclude_pids: Optional[set[int]] = None) -> list[In
                         pass
 
                     config_path = extract_config_from_command(command)
-                    if not config_path:
-                        config_path = "unknown"
 
-                    # Try reading from /proc
-                    if config_path == "unknown":
+                    # If no config specified, try to infer from working directory
+                    if not config_path or config_path == "unknown":
+                        try:
+                            # Check if config.yaml exists in the process's working directory
+                            cwd_link = f"/proc/{pid}/cwd"
+                            if Path(cwd_link).exists():
+                                proc_cwd = Path(cwd_link).resolve()
+                                default_config = proc_cwd / 'config.yaml'
+                                if default_config.exists():
+                                    config_path = str(default_config)
+                        except (FileNotFoundError, PermissionError, OSError):
+                            pass
+
+                    # Try reading from /proc for cmdline as fallback
+                    if not config_path or config_path == "unknown":
                         try:
                             with open(f"/proc/{pid}/cmdline", "r") as f:
                                 cmdline = f.read().replace("\x00", " ")
-                                config_path = extract_config_from_command(cmdline)
+                                cmdline_config = extract_config_from_command(cmdline)
+                                if cmdline_config and cmdline_config != "unknown":
+                                    config_path = cmdline_config
                         except (FileNotFoundError, PermissionError):
                             pass
+
+                    if not config_path:
+                        config_path = "unknown"
 
                     instances.append(
                         InstanceInfo(
@@ -381,6 +421,43 @@ def extract_config_from_command(command: str) -> str:
         return match.group(1)
 
     return "unknown"
+
+
+def _is_ftrigger_process(proc_name: str, proc_exe: str, cmdline: list) -> bool:
+    """Check if a process is actually ftrigger.
+
+    Args:
+        proc_name: Process name
+        proc_exe: Process executable path
+        cmdline: Command line arguments list
+
+    Returns:
+        True if this is an ftrigger process, False otherwise
+    """
+    # Exact match for executable name "ftrigger"
+    if proc_name == 'ftrigger' or (proc_exe and proc_exe.endswith('/ftrigger')):
+        return True
+
+    # Check if it's python running ftrigger module
+    if not cmdline:
+        return False
+
+    # Must be python executing ftrigger, not just containing "ftrigger" in path
+    first_arg = cmdline[0]
+    if not (first_arg.endswith('python') or first_arg.endswith('python3') or
+            first_arg.endswith('python.exe') or first_arg.endswith('python3.exe')):
+        return False
+
+    # Check for "python -m ftrigger" or "python path/to/ftrigger"
+    for i, arg in enumerate(cmdline):
+        # Match "-m ftrigger" using enumerate for O(n) complexity
+        if arg == '-m' and i + 1 < len(cmdline):
+            if cmdline[i + 1] == 'ftrigger':
+                return True
+        elif arg.endswith('/ftrigger') or arg.endswith('\\ftrigger'):
+            return True
+
+    return False
 
 
 def get_all_instances() -> list[InstanceInfo]:
