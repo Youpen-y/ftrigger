@@ -237,41 +237,17 @@ def get_standalone_processes(exclude_pids: Optional[set[int]] = None) -> list[In
                 if pid in exclude_pids:
                     continue
 
-                # Check if this is an ftrigger process by executable name
-                # This avoids false positives from editors opening ftrigger project files
-                # and other programs with "ftrigger" in their name
+                # Get process info once
                 proc_name = proc.info.get('name', '')
                 proc_exe = proc.info.get('exe', '')
+                cmdline = proc.info.get('cmdline', [])
 
-                # Check if the process is actually ftrigger (python executing ftrigger module)
-                is_ftrigger = False
-                # Exact match for executable name "ftrigger"
-                if proc_name == 'ftrigger' or (proc_exe and proc_exe.endswith('/ftrigger')):
-                    is_ftrigger = True
-                else:
-                    # Check if it's python running ftrigger module
-                    cmdline = proc.info.get('cmdline', [])
-                    if cmdline:
-                        # Must be python executing ftrigger, not just containing "ftrigger" in path
-                        first_arg = cmdline[0]
-                        if (first_arg.endswith('python') or first_arg.endswith('python3') or
-                                first_arg.endswith('python.exe') or first_arg.endswith('python3.exe')):
-                            # Check for "python -m ftrigger" or "python path/to/ftrigger"
-                            for arg in cmdline:
-                                # Match "-m ftrigger" or executable ending with "/ftrigger"
-                                if arg == '-m' and cmdline.index(arg) + 1 < len(cmdline):
-                                    next_idx = cmdline.index(arg) + 1
-                                    if cmdline[next_idx] == 'ftrigger':
-                                        is_ftrigger = True
-                                        break
-                                elif arg.endswith('/ftrigger') or arg.endswith('\\ftrigger'):
-                                    is_ftrigger = True
-                                    break
-
-                if not is_ftrigger:
+                # Check if this is an ftrigger process using helper function
+                # This avoids false positives from editors opening ftrigger project files
+                # and other programs with "ftrigger" in their name
+                if not _is_ftrigger_process(proc_name, proc_exe, cmdline):
                     continue
 
-                cmdline = proc.info['cmdline']
                 if not cmdline:
                     continue
 
@@ -331,9 +307,9 @@ def get_standalone_processes(exclude_pids: Optional[set[int]] = None) -> list[In
                     # More precise matching to avoid false positives:
                     # - python -m ftrigger (module execution)
                     # - /path/to/ftrigger (direct executable)
-                    # - ftrigger --option (command with options)
-                    # Skip: another-ftrigger, /path/to/another-ftrigger, etc.
-                    if not re.search(r'(?:python\s+)?-m\s+ftrigger|/ftrigger(?:\s|$)|\bftrigger(?:\s+[--]|$)', line):
+                    # - ftrigger <subcommand|option> (any argument)
+                    # Skip: another-ftrigger, /path/to/another-ftrigger, grep ftrigger, etc.
+                    if not re.search(r'(?:python\s+)?-m\s+ftrigger|/ftrigger(?:\s|$)|(?:^|\s)ftrigger(?:\s+\S|$)', line):
                         continue
 
                     parts = line.split(None, 10)
@@ -420,6 +396,43 @@ def extract_config_from_command(command: str) -> str:
         return match.group(1)
 
     return "unknown"
+
+
+def _is_ftrigger_process(proc_name: str, proc_exe: str, cmdline: list) -> bool:
+    """Check if a process is actually ftrigger.
+
+    Args:
+        proc_name: Process name
+        proc_exe: Process executable path
+        cmdline: Command line arguments list
+
+    Returns:
+        True if this is an ftrigger process, False otherwise
+    """
+    # Exact match for executable name "ftrigger"
+    if proc_name == 'ftrigger' or (proc_exe and proc_exe.endswith('/ftrigger')):
+        return True
+
+    # Check if it's python running ftrigger module
+    if not cmdline:
+        return False
+
+    # Must be python executing ftrigger, not just containing "ftrigger" in path
+    first_arg = cmdline[0]
+    if not (first_arg.endswith('python') or first_arg.endswith('python3') or
+            first_arg.endswith('python.exe') or first_arg.endswith('python3.exe')):
+        return False
+
+    # Check for "python -m ftrigger" or "python path/to/ftrigger"
+    for i, arg in enumerate(cmdline):
+        # Match "-m ftrigger" using enumerate for O(n) complexity
+        if arg == '-m' and i + 1 < len(cmdline):
+            if cmdline[i + 1] == 'ftrigger':
+                return True
+        elif arg.endswith('/ftrigger') or arg.endswith('\\ftrigger'):
+            return True
+
+    return False
 
 
 def get_all_instances() -> list[InstanceInfo]:
