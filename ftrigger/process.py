@@ -231,7 +231,7 @@ def get_standalone_processes(exclude_pids: Optional[set[int]] = None) -> list[In
 
     if HAS_PSUTIL:
         # Use psutil (cross-platform)
-        for proc in psutil.process_iter(['pid', 'name', 'exe', 'cmdline', 'create_time']):
+        for proc in psutil.process_iter(['pid', 'name', 'exe', 'cmdline', 'create_time', 'cwd']):
             try:
                 pid = proc.info['pid']
                 if pid in exclude_pids:
@@ -241,6 +241,7 @@ def get_standalone_processes(exclude_pids: Optional[set[int]] = None) -> list[In
                 proc_name = proc.info.get('name', '')
                 proc_exe = proc.info.get('exe', '')
                 cmdline = proc.info.get('cmdline', [])
+                proc_cwd = proc.info.get('cwd', '')
 
                 # Check if this is an ftrigger process using helper function
                 # This avoids false positives from editors opening ftrigger project files
@@ -263,6 +264,14 @@ def get_standalone_processes(exclude_pids: Optional[set[int]] = None) -> list[In
 
                 # Extract config path from command line
                 config_path = extract_config_from_command(cmdline_str)
+
+                # If no config specified in command line, try to infer from working directory
+                if (not config_path or config_path == "unknown") and proc_cwd:
+                    # Check if config.yaml exists in the working directory
+                    default_config = Path(proc_cwd) / 'config.yaml'
+                    if default_config.exists():
+                        config_path = str(default_config)
+
                 if not config_path:
                     config_path = "unknown"
 
@@ -346,17 +355,33 @@ def get_standalone_processes(exclude_pids: Optional[set[int]] = None) -> list[In
                         pass
 
                     config_path = extract_config_from_command(command)
-                    if not config_path:
-                        config_path = "unknown"
 
-                    # Try reading from /proc
-                    if config_path == "unknown":
+                    # If no config specified, try to infer from working directory
+                    if not config_path or config_path == "unknown":
+                        try:
+                            # Check if config.yaml exists in the process's working directory
+                            cwd_link = f"/proc/{pid}/cwd"
+                            if Path(cwd_link).exists():
+                                proc_cwd = Path(cwd_link).resolve()
+                                default_config = proc_cwd / 'config.yaml'
+                                if default_config.exists():
+                                    config_path = str(default_config)
+                        except (FileNotFoundError, PermissionError, OSError):
+                            pass
+
+                    # Try reading from /proc for cmdline as fallback
+                    if not config_path or config_path == "unknown":
                         try:
                             with open(f"/proc/{pid}/cmdline", "r") as f:
                                 cmdline = f.read().replace("\x00", " ")
-                                config_path = extract_config_from_command(cmdline)
+                                cmdline_config = extract_config_from_command(cmdline)
+                                if cmdline_config and cmdline_config != "unknown":
+                                    config_path = cmdline_config
                         except (FileNotFoundError, PermissionError):
                             pass
+
+                    if not config_path:
+                        config_path = "unknown"
 
                     instances.append(
                         InstanceInfo(
