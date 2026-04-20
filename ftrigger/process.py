@@ -231,20 +231,51 @@ def get_standalone_processes(exclude_pids: Optional[set[int]] = None) -> list[In
 
     if HAS_PSUTIL:
         # Use psutil (cross-platform)
-        for proc in psutil.process_iter(['pid', 'cmdline', 'create_time']):
+        for proc in psutil.process_iter(['pid', 'name', 'exe', 'cmdline', 'create_time']):
             try:
                 pid = proc.info['pid']
                 if pid in exclude_pids:
+                    continue
+
+                # Check if this is an ftrigger process by executable name
+                # This avoids false positives from editors opening ftrigger project files
+                # and other programs with "ftrigger" in their name
+                proc_name = proc.info.get('name', '')
+                proc_exe = proc.info.get('exe', '')
+
+                # Check if the process is actually ftrigger (python executing ftrigger module)
+                is_ftrigger = False
+                # Exact match for executable name "ftrigger"
+                if proc_name == 'ftrigger' or (proc_exe and proc_exe.endswith('/ftrigger')):
+                    is_ftrigger = True
+                else:
+                    # Check if it's python running ftrigger module
+                    cmdline = proc.info.get('cmdline', [])
+                    if cmdline:
+                        # Must be python executing ftrigger, not just containing "ftrigger" in path
+                        first_arg = cmdline[0]
+                        if (first_arg.endswith('python') or first_arg.endswith('python3') or
+                                first_arg.endswith('python.exe') or first_arg.endswith('python3.exe')):
+                            # Check for "python -m ftrigger" or "python path/to/ftrigger"
+                            for arg in cmdline:
+                                # Match "-m ftrigger" or executable ending with "/ftrigger"
+                                if arg == '-m' and cmdline.index(arg) + 1 < len(cmdline):
+                                    next_idx = cmdline.index(arg) + 1
+                                    if cmdline[next_idx] == 'ftrigger':
+                                        is_ftrigger = True
+                                        break
+                                elif arg.endswith('/ftrigger') or arg.endswith('\\ftrigger'):
+                                    is_ftrigger = True
+                                    break
+
+                if not is_ftrigger:
                     continue
 
                 cmdline = proc.info['cmdline']
                 if not cmdline:
                     continue
 
-                # Check if this is an ftrigger process
                 cmdline_str = ' '.join(cmdline)
-                if 'ftrigger' not in cmdline_str:
-                    continue
 
                 # Skip systemctl invocations
                 if 'systemctl' in cmdline_str:
@@ -297,6 +328,14 @@ def get_standalone_processes(exclude_pids: Optional[set[int]] = None) -> list[In
 
             for line in result.stdout.split("\n"):
                 if "ftrigger" in line and "grep" not in line:
+                    # More precise matching to avoid false positives:
+                    # - python -m ftrigger (module execution)
+                    # - /path/to/ftrigger (direct executable)
+                    # - ftrigger --option (command with options)
+                    # Skip: another-ftrigger, /path/to/another-ftrigger, etc.
+                    if not re.search(r'(?:python\s+)?-m\s+ftrigger|/ftrigger(?:\s|$)|\bftrigger(?:\s+[--]|$)', line):
+                        continue
+
                     parts = line.split(None, 10)
                     if len(parts) < 11:
                         continue
