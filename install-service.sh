@@ -253,7 +253,15 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
-Type=simple
+Type=simple"
+
+    # Add PATH environment for user services to find claude CLI
+    if [ "$mode" = "user" ]; then
+        service_content="${service_content}
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin"
+    fi
+
+    service_content="${service_content}
 ExecStart=${ftrigger_exec} --config ${config_path}
 ExecReload=/bin/kill -HUP \$MAINPID
 KillMode=process
@@ -302,6 +310,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
 ExecStart=${ftrigger_exec} --config ${HOME}/.config/ftrigger/%i.yaml
 ExecReload=/bin/kill -HUP \$MAINPID
 KillMode=process
