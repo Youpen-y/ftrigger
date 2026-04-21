@@ -42,7 +42,7 @@ def show_logs(
             process = subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+                stderr=subprocess.STDOUT,  # Merge stderr to avoid blocking
                 text=True
             )
 
