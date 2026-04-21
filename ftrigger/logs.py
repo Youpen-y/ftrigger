@@ -46,10 +46,15 @@ def show_logs(
                 text=True
             )
 
-            # Filter output line by line
-            for line in process.stdout:
-                if _should_show_line(line, level, grep):
-                    print(line, end='')
+            try:
+                # Filter output line by line
+                for line in process.stdout:
+                    if _should_show_line(line, level, grep):
+                        print(line, end='')
+            finally:
+                # Clean up resources
+                process.stdout.close()
+                process.wait()
         else:
             # Direct output, no filtering
             result = subprocess.run(cmd, capture_output=False, text=True)
