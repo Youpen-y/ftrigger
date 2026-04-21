@@ -131,14 +131,14 @@ def execute_claude(
             if process.returncode == 0:
                 logger.info("Claude CLI executed successfully")
                 if stdout:
-                    # Use separators to make output clearer
-                    logger.info("=" * 60)
-                    logger.info("Claude response:")
-                    logger.info("-" * 60)
+                    # Output response at DEBUG level to avoid cluttering logs
+                    logger.debug("=" * 60)
+                    logger.debug("Claude response:")
+                    logger.debug("-" * 60)
                     # Output line by line to avoid overly long lines
                     for line in stdout.strip().split('\n'):
-                        logger.info(f"  {line}")
-                    logger.info("=" * 60)
+                        logger.debug(f"  {line}")
+                    logger.debug("=" * 60)
             else:
                 logger.error(f"Claude CLI execution failed (exit code: {process.returncode})")
                 if stderr:
