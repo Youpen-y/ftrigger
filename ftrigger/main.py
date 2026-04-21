@@ -38,6 +38,7 @@ def main():
     )
     parser.add_argument(
         "-V",
+        "-v",
         "--version",
         action="version",
         version=f"%(prog)s {__version__}",
@@ -48,22 +49,52 @@ def main():
         default="config.yaml",
         help="Configuration file path (default: config.yaml in current directory)",
     )
-    parser.add_argument(
+
+    # Main mode group (mutually exclusive)
+    mode_group = parser.add_mutually_exclusive_group()
+    mode_group.add_argument(
         "-s",
         "--status",
         action="store_true",
         help="Show status panel and exit",
     )
+    mode_group.add_argument(
+        "-l",
+        "--logs",
+        action="store_true",
+        help="Show logs and exit",
+    )
+
     parser.add_argument(
         "--pid",
         metavar="<pid|name>",
         help="Show detailed status for specified PID or service name (use with --status)",
     )
-    parser.add_argument(
-        "-v",
-        "--verbose",
+    # Logs options (only used with --logs)
+    logs_group = parser.add_argument_group("logs options")
+    logs_group.add_argument(
+        "-f",
+        "--follow",
         action="store_true",
-        help="Show verbose logs",
+        help="Follow log output in real time (only with --logs)",
+    )
+    logs_group.add_argument(
+        "-n",
+        "--last",
+        type=int,
+        metavar="N",
+        default=20,
+        help="Show last N log lines (default: 20, only with --logs)",
+    )
+    logs_group.add_argument(
+        "--level",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
+        help="Filter by log level (only with --logs)",
+    )
+    logs_group.add_argument(
+        "--grep",
+        metavar="PATTERN",
+        help="Filter by keyword/pattern (only with --logs)",
     )
 
     args = parser.parse_args()
@@ -78,6 +109,18 @@ def main():
 
         # show_status_with_args handles pid argument internally
         show_status_with_args(args.pid)
+        return
+
+    # Logs mode: show logs and exit
+    if args.logs:
+        from .logs import show_logs
+
+        show_logs(
+            follow=args.follow,
+            last_n=args.last,
+            level=args.level,
+            grep=args.grep
+        )
         return
 
     # Load configuration for monitoring mode
@@ -104,9 +147,8 @@ def main():
         print(f"Configuration file error: {e}", file=sys.stderr)
         sys.exit(1)
 
-    # Set final log level based on config file and command line arguments
-    # Command line -v flag has highest priority
-    log_level = "DEBUG" if args.verbose else config.log_level
+    # Set final log level based on config file
+    log_level = config.log_level
     setup_logging(log_level)
 
     print("File Trigger starting...")
