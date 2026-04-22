@@ -1,0 +1,78 @@
+name: Issue Labeler
+
+on:
+  issues:
+    types: [opened, edited]
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  label:
+    runs-on: ubuntu-latest
+    if: github.event.issue.user.type != 'Bot'
+
+    steps:
+      - name: Auto-label based on issue content
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const issue = context.payload.issue;
+            const title = (issue.title || '').toLowerCase();
+            const body = (issue.body || '').toLowerCase();
+            const content = `${title}\n${body}`;
+
+            // Define label patterns
+            const patterns = {
+              // Type labels
+              'type-bug': /\b(bug|fix|crash|error|broken|doesn't work|not working|fail|exception|regression)\b/i,
+              'type-feature': /\b(feature|enhancement|improve|add|implement|support|new|wish|request)\b/i,
+              'type-docs': /\b(documentation|readme|doc|example|guide|tutorial|comment|typo)\b/i,
+              'type-performance': /\b(performance|slow|optimize|latency|memory|leak|fast|speed)\b/i,
+              'type-question': /\b(question|help|how to|what is|why|can someone|explain)\b/i,
+              'type-test': /\b(test|testing|spec|coverage|unittest|pytest|integration test|e2e|tdd)\b/i,
+
+              // Component labels
+              'component-config': /\b(config|yaml|toml|setting|option|watch\.|prompt|permission)\b/i,
+              'component-watcher': /\b(watch|monitor|file|directory|recursive|events|created|modified|deleted)\b/i,
+              'component-executor': /\b(claude|executor|prompt|trigger|run|execute|command)\b/i,
+              'component-status': /\b(status|panel|display|show|instance|pid|process)\b/i,
+              'component-logs': /\b(log|journalctl|output|stderr|stdout|debug)\b/i,
+              'component-activity': /\b(activity|statistics|stats|history|tracking)\b/i,
+              'component-install': /\b(install|setup|service|systemd|path|env|permission)\b/i,
+
+              // Priority labels (only for bugs)
+              'priority-critical': /\b(crash|blocker|emergency|urgent|data loss|security)\b/i,
+              'priority-high': /\b(major|important|breaking|severe)\b/i,
+              'priority-low': /\b(minor|trivial|cosmetic|nice to have)\b/i,
+            };
+
+            const labelsToAdd = [];
+            const existingLabels = issue.labels.map(l => l.name);
+
+            // Check each pattern
+            for (const [label, pattern] of Object.entries(patterns)) {
+              if (pattern.test(content) && !existingLabels.includes(label)) {
+                labelsToAdd.push(label);
+              }
+            }
+
+            // Add default priority-medium for bugs without priority
+            if (content.match(/\b(bug|fix|error|broken)\b/i) &&
+                !labelsToAdd.some(l => l.startsWith('priority-'))) {
+              labelsToAdd.push('priority-medium');
+            }
+
+            // Add labels if any
+            if (labelsToAdd.length > 0) {
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                labels: labelsToAdd
+              });
+              console.log(`Added labels: ${labelsToAdd.join(', ')}`);
+            } else {
+              console.log('No matching labels found');
+            }
